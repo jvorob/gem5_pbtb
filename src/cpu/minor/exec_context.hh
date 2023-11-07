@@ -158,6 +158,15 @@ class ExecContext : public gem5::ExecContext
         thread.getReg(si->srcRegIdx(idx), val);
     }
 
+    // Sets the precomputed-BTB structure
+    void
+    setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
+    {
+        uint8_t a = id;
+        panic("not yet supported!");
+        return;
+    }
+
     void *
     getWritableRegOperand(const StaticInst *si, int idx) override
     {

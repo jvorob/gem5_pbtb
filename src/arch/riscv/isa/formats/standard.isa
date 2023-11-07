@@ -540,3 +540,57 @@ def format CSROp(code, *opt_flags) {{
     decode_block = BasicDecode.subst(iop)
     exec_output = CSRExecute.subst(iop)
 }};
+
+def format BmovOp(code, *opt_flags) {{
+    regs = ['']
+    iop = InstObjParams(name, Name, 'ImmOp<int64_t>',
+        {'code': code, 'imm_code': 'imm = IMM12;',
+         'regs': ','.join(regs)}, opt_flags)
+    header_output = BmovDeclare.subst(iop)
+    decoder_output = ImmConstructor.subst(iop)
+    decode_block = BasicDecode.subst(iop)
+    exec_output = BmovExecute.subst(iop)
+}};
+
+
+def template BmovDeclare {{
+    //
+    // Static instruction class for "%(mnemonic)s".
+    //
+    class %(class_name)s : public %(base_class)s
+    {
+      private:
+        %(reg_idx_arr_decl)s;
+
+      public:
+        /// Constructor.
+        %(class_name)s(ExtMachInst machInst);
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        std::string generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const override;
+    };
+}};
+
+
+def template BmovExecute {{
+    Fault
+    %(class_name)s::execute(
+        ExecContext *xc, trace::InstRecord *traceData) const
+    {
+        %(op_decl)s;
+        %(op_rd)s;
+        %(code)s;
+        %(op_wb)s;
+        return NoFault;
+    }
+
+    std::string
+    %(class_name)s::generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const
+    {
+        std::stringstream ss;
+        ss << mnemonic << ' ';
+        ss << imm;
+        return ss.str();
+    }
+}};

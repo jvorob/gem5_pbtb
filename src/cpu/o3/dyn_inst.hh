@@ -1031,6 +1031,16 @@ class DynInst : public ExecContext, public RefCounted
         _destMiscRegVal.push_back(val);
     }
 
+
+    // Sets the precomputed-BTB structure
+    void
+    setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
+    {
+        uint8_t a = id;
+        panic("not yet supported!");
+        return;
+    }
+
     /** Reads a misc. register, including any side-effects the read
      * might have as defined by the architecture.
      */

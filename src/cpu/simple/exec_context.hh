@@ -262,6 +262,15 @@ class SimpleExecContext : public ExecContext
         thread->setMiscReg(misc_reg, val);
     }
 
+    // Sets the precomputed-BTB structure
+    void
+    setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
+    {
+        uint8_t a = id;
+        panic("not yet supported!");
+        return;
+    }
+
     const PCStateBase &
     pcState() const override
     {

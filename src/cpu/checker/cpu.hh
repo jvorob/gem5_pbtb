@@ -194,6 +194,15 @@ class CheckerCPU : public BaseCPU, public ExecContext
         return thread->getWritableReg(si->destRegIdx(idx));
     }
 
+    // Sets the precomputed-BTB structure
+    void
+    setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
+    {
+        uint8_t a = id;
+        panic("not yet supported!");
+        return;
+    }
+
     void
     setRegOperand(const StaticInst *si, int idx, RegVal val) override
     {

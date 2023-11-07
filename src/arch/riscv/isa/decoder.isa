@@ -808,6 +808,22 @@ decode QUADRANT default Unknown::unknown() {
             }
         }
 
+
+        0x0a: decode FUNCT3 {
+            format BmovOp {
+                0x0: bmovs({{
+                    xc->setPBTB(0, RD, imm);
+                }});
+                0x1: bmovt({{
+                    xc->setPBTB(1, RD, imm);
+                }});
+                0x2: bmovc({{
+                    xc->setPBTB(2, RD, imm);
+                }});
+            }
+        }
+
+
         0x0b: decode FUNCT3 {
             0x2: decode AMOFUNCT {
                 0x2: LoadReserved::lr_w({{

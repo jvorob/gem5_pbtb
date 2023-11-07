@@ -99,6 +99,15 @@ class ExecContext
      */
     virtual void setMiscReg(int misc_reg, RegVal val) = 0;
 
+    /**
+     * Sets an entry in the precomputed-BTB to control future branches
+     * src_tgt_cond: 0 means set src, 1 means set tgt, 2 means set condition
+     * btb_slot: 5-bit index
+     * addr: currently an absolute 20-bit immediate, TBD
+     */
+    virtual void setPBTB(uint8_t src_tgt_cond, uint8_t btb_slot,
+                         Addr addr) = 0;
+
     /** @} */
 
     /**

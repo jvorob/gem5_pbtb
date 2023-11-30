@@ -1459,5 +1459,196 @@ CPU::htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
     }
 }
 
+
+
+// ==============================================================
+//
+//                        JV PRECOMPUTED BTB
+//
+// ==============================================================
+//
+/**
+ * JV ADDITION: TODO find somewhere more appropriate to stick this
+ * Keeps track of branch sources, targets, conditions
+ * Set by bmovs, bmovt, bmovc ops
+ *
+ * FOR NOW: set synchronously at execute time (commit time?), no handling for
+ * speculation/squashing
+ */
+
+const char* PrecomputedBTB::BranchTypeCodes[] = {"N/A", "TKN", "LOP",
+                                                 "BIT", "B_C"};
+const char* PrecomputedBTB::BranchTypeStrs[] = { "NoBranch", "Taken", "Loop",
+                                                 "ShiftBit", "ShiftBit_Clear"};
+
+void
+PrecomputedBTB::debugDump() {
+    //TODO: make these DPRINTF? (need to define my own debug flag somewhere)
+    printf("PBTB: {\n");
+    for (int i = 0; i < NUM_REGS; i++) {
+        auto branchCode = BranchTypeCodes[reg_cond_type[i]];
+
+        printf("  %2i: SRC=%8lx TGT=%8lx | %s: %ld %ld\n", i,
+                (uint64_t)reg_source[i],
+                (uint64_t)reg_target[i],
+                branchCode,
+                reg_cond_val[i],
+                reg_cond_aux_val[i]);
+    }
+
+    printf("}\n");
+}
+
+
+void PrecomputedBTB::setSource(int breg, Addr source_addr) {
+    assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
+    reg_source[breg] = source_addr;
+}
+void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
+    assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
+    reg_target[breg] = target_addr;
+}
+
+// Sets the condition for a given branch
+// immVal and regVal treated differently for different types?
+// - Taken or NotTaken ignore it
+// - LoopTaken will be taken (immVal + regVal) times, then NT once, then repeat
+// - TODO: LoopNotTaken?
+// - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
+//     many bits of regval loop to form the pattern
+//
+void PrecomputedBTB::setCondition(int breg,
+                                  BranchType conditionType,
+                                  uint64_t val) {
+    assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
+    switch (conditionType) {
+        case NoBranch:
+        case Taken:
+            reg_cond_type[breg]    = conditionType;
+            reg_cond_val[breg]     = 0;
+            break;
+        case LoopN:
+            reg_cond_type[breg]    = conditionType;
+            reg_cond_val[breg]     = val;
+            break;
+        case ShiftBit:
+        case ShiftBit_Clear:
+            reg_cond_type[breg]    = ShiftBit;
+
+            if (conditionType == ShiftBit_Clear) { //clear fifo
+                reg_cond_val[breg]     = 0; // bits
+                reg_cond_aux_val[breg] = 0; // num_bits
+            }
+
+            // Bits shifted out at LSB, shifted in at bit N,
+            // where N is current size of array
+            // e.g. if curr_size == e.g. 3 bits, next bit comes in at bit 3
+            reg_cond_val[breg]     |= (val?1:0) << reg_cond_aux_val[breg];
+            reg_cond_aux_val[breg] += 1; // num_bits
+
+            // stay away from the sign bit just to be safe
+            assert(reg_cond_aux_val[breg] <= 63);
+            //TODO: handle overflow propely?
+            break;
+    }
+    reg_cond_type[breg] = conditionType;
+}
+
+
+// FUTURE THOUGHTS FOR SPECULATIVE EXECUTION:
+// - Fetch stage will ask us to predict a branch, and we
+// need to decrement/shift when we do so.
+//   - Do we checkpoint everytime a branch is requested until it's committed?
+//   - Do we decrement/undo if that branch op is squashed?
+//   - How do we handle speculative bmovs?
+//
+
+/** (JV: Copied from BPredUnit::predict(...))
+    * Returns whether or not the inst is a taken branch, and the
+    * target of the branch if it is taken.
+    * @param inst The branch instruction.
+    * @param PC The predicted PC is passed back through this parameter.
+    * @param tid The thread id.
+    * @return Returns if the branch is taken or not.
+    */
+bool PrecomputedBTB::isBranch(const StaticInstPtr &inst,
+                              const InstSeqNum &seqNum,
+                              PCStateBase &pc,
+                              ThreadID tid) {
+
+    // TODO verify that inst breg matches lookup-ed breg
+    // TODO: handle checkpointing?
+
+    //auto target = std::make_unique<GenericISA::SimplePCState<4>>();
+    // TODO: everywhere else uses a unique_ptr<PCState>, is there a reason for
+    // that? or is a bare object fine?
+    auto target = GenericISA::SimplePCState<4>();
+    target.set(pc.instAddr());
+
+    int breg = -1; // If found, match will go here
+    BranchType type = NoBranch; // If match found, type will go here
+
+    // ==== Loop to find first breg matching the source addr
+    for (int i = 0; i < NUM_REGS; i++) {
+        if (reg_source[i] == pc.instAddr()) {
+            //Found a match!
+            breg = i;
+            type = reg_cond_type[i];
+            break;
+        }
+    }
+
+    // ==== Check based on branch type whether or not it's taken
+    // NOTE: breg might be -1, only guaranteed for breg to be valid
+    //       if type != NoBranch
+    bool pred_taken;
+
+    if (type == NoBranch) {
+        pred_taken = false;
+    } else if (type == Taken) {
+        pred_taken = true;
+
+    } else if (type == LoopN) {
+        if (reg_cond_val[breg] > 0) {
+            pred_taken = true;
+            reg_cond_val[breg]--; // careful so we don't underflow
+        } else {
+            pred_taken = false;
+        }
+
+    } else if (type == ShiftBit) {
+        // cond_val holds bits, cond_aux_val is number of bits valid
+        if (reg_cond_aux_val[breg] == 0) { //if num_bits > 0
+            pred_taken = reg_cond_val[breg] & 0x1;
+            reg_cond_val[breg] >>= 1; // shift out bottom bit
+            reg_cond_aux_val[breg]--; // bits-- (don't underflow!)
+        } else { // no bits, default to false
+            //TODO: warn about this somehow? ISA-wise this feels
+            // like a compiler error or a mis-speculation issue
+            pred_taken = false;
+        }
+    } else {
+        assert(false); // Unrecognized pbtb entry type, crash out
+        return false;
+    }
+
+    // ==== Prediction made: return to caller
+    // Return next-fetched PC through pc arg
+    if (pred_taken){
+        assert(breg >= 0); // breg guaranteed to be valid
+        target.set(reg_target[breg]);
+        set(pc, target);
+        return true; //  taken
+
+    } else { //Else: no match, OR match found but not taken
+        inst->advancePC(target);
+        set(pc, target);
+        return false; // Not-taken
+    }
+
+}
+
+// ==============================================================
+
 } // namespace o3
 } // namespace gem5

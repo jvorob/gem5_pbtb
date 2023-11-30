@@ -199,6 +199,7 @@ class CheckerCPU : public BaseCPU, public ExecContext
     setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
     {
         uint8_t a = id;
+        printf("Hello PBTB(%d)", a);
         panic("not yet supported!");
         return;
     }

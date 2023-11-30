@@ -45,6 +45,7 @@
 
 #include <iostream>
 #include <list>
+#include <memory>
 #include <queue>
 #include <set>
 #include <vector>
@@ -83,6 +84,100 @@ class Process;
 namespace o3
 {
 
+/**
+ * JV ADDITION: TODO find somewhere more appropriate to stick this
+ * Keeps track of branch sources, targets, conditions
+ * Set by bmovs, bmovt, bmovc ops
+ *
+ * FOR NOW: set synchronously at execute time (commit time?), no
+ * handling for speculation/squashing
+ */
+class PrecomputedBTB
+{
+  public:
+    enum BranchType
+    {
+        NoBranch = 0, //Init value? Mostly for debugging
+        Taken,
+        LoopN, //Sets a counter, loops N times, then stops
+        ShiftBit, //Shifts a bit into the fifo, branching
+                  //consumes 1 bit each time
+
+        // PSEUDO-BRANCH-TYPE: can be passed in to specify different
+        // behavior but shouldn't be put into reg_cond_type
+        ShiftBit_Clear, // ShiftBit, but also resets the fifo??
+
+        //TODO: IF ADDING NEW BRANCH TYPE: UPDATE
+        //      BRANCHTYPECODES AND BRANCHTYPETOSTR
+    };
+
+    //3-character codes for each branch type
+    const static char* BranchTypeCodes[];
+    const static char* BranchTypeStrs[];
+
+    const static int NUM_REGS = 32;
+
+    //TODO remove this? I'm using shortcodes??
+    const static char* BranchTypeToStr(BranchType b, bool verbose){
+      switch(b) {
+        case NoBranch:        return "NoBranch";
+        case Taken:           return "Taken";
+        case LoopN:           return "Loop";
+        case ShiftBit:        return "ShiftBit";
+        case ShiftBit_Clear : return "ShiftBit_Clear";
+        default:              return "ERROR_UNKNOWN";
+      }
+    }
+
+  private:
+    //Constructor: initializes all to 0
+    Addr       reg_source[NUM_REGS] = {}; // All addresses are absolute
+    Addr       reg_target[NUM_REGS] = {};
+    BranchType reg_cond_type[NUM_REGS] = {};  //defaults to NoBranch
+    uint64_t   reg_cond_val[NUM_REGS] = {};
+    uint64_t   reg_cond_aux_val[NUM_REGS] = {}; //for shiftreg, counts number
+                                                //of bits held
+
+  public:
+    //print out
+    void debugDump();
+
+
+    void setSource(int breg, Addr source_addr);
+    void setTarget(int breg, Addr target_addr);
+
+    // Sets the condition for a given branch
+    // immVal and regVal treated differently for different types?
+    // - Taken or NotTaken ignore it
+    // - LoopTaken will be taken (immVal + regVal) times, then NT, than stall
+    // - TODO: LoopNotTaken?
+    // - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
+    //     many bits of regval loop to form the pattern
+    //
+    void setCondition(int breg, BranchType conditionType, uint64_t val);
+
+
+    // FUTURE THOUGHTS FOR SPECULATIVE EXECUTION:
+    // - Fetch stage will ask us to predict a branch, and we need to
+    //   decrement/shift  when we do so.
+    // - Do we checkpoint everytime a branch is requested until it's committed?
+    // - Do we decrement/undo if that branch op is squashed?
+    // - How do we handle speculative bmovs?
+    //
+
+    /** (JV: Copied from BPredUnit::predict(...))
+        * Returns whether or not the inst is a taken branch, and the
+        * target of the branch if it is taken.
+        * @param inst The branch instruction.
+        * @param PC The predicted PC is passed back through this parameter.
+        * @param tid The thread id.
+        * @return Returns if the branch is taken or not.
+        */
+    bool isBranch(const StaticInstPtr &inst, const InstSeqNum &seqNum,
+                    PCStateBase &pc, ThreadID tid);
+
+}; // class PrecomputedBTB
+
 class ThreadContext;
 
 /**
@@ -112,6 +207,7 @@ class CPU : public BaseCPU
 
     /** Overall CPU status. */
     Status _status;
+
 
   private:
 
@@ -587,7 +683,12 @@ class CPU : public BaseCPU
     // hardware transactional memory
     void htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
                             HtmFailureFaultCause cause) override;
+
+  public:
+    PrecomputedBTB PBTB;
 };
+
+
 
 } // namespace o3
 } // namespace gem5

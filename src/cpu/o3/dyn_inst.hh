@@ -1036,8 +1036,43 @@ class DynInst : public ExecContext, public RefCounted
     void
     setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
     {
-        uint8_t a = id;
-        panic("not yet supported!");
+        //TODO: move these elswhere
+        //NOTE: these don't correspond to the PBTB::BranchType enum, even
+        //      though they look like they do, since they also include
+        //      bmovs and bmovt in them
+        const int BMOV_FUNCT3_SRC        = 0;
+        const int BMOV_FUNCT3_TGT        = 1;
+        const int BMOV_FUNCT3_C_TAKEN    = 4;
+        const int BMOV_FUNCT3_C_LOOP     = 5;
+        const int BMOV_FUNCT3_C_BIT      = 6;
+        const int BMOV_FUNCT3_C_BITCLEAR = 7;
+
+        switch(id) {
+            case BMOV_FUNCT3_SRC:
+                cpu->PBTB.setSource(btb_slot, addr);
+                break;
+            case BMOV_FUNCT3_TGT:
+                cpu->PBTB.setTarget(btb_slot, addr);
+                break;
+            case BMOV_FUNCT3_C_TAKEN:
+                cpu->PBTB.setCondition(btb_slot,
+                        PrecomputedBTB::BranchType::Taken, 1);
+                break;
+            case BMOV_FUNCT3_C_LOOP:
+                cpu->PBTB.setCondition(btb_slot,
+                        PrecomputedBTB::BranchType::LoopN, addr);
+                break;
+            case BMOV_FUNCT3_C_BIT:
+                cpu->PBTB.setCondition(btb_slot,
+                        PrecomputedBTB::BranchType::ShiftBit, addr);
+                break;
+            case BMOV_FUNCT3_C_BITCLEAR:
+                cpu->PBTB.setCondition(btb_slot,
+                        PrecomputedBTB::BranchType::ShiftBit_Clear, addr);
+                break;
+        }
+
+        cpu->PBTB.debugDump();
         return;
     }
 

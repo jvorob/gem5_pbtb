@@ -498,8 +498,10 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     }
 
     ThreadID tid = inst->threadNumber;
-    predict_taken = branchPred->predict(inst->staticInst, inst->seqNum,
-                                        next_pc, tid);
+    //predict_taken = branchPred->predict(inst->staticInst, inst->seqNum,
+    //                                    next_pc, tid
+    predict_taken = cpu->PBTB.isBranch(inst->staticInst, inst->seqNum,
+                                       next_pc, tid);
 
     if (predict_taken) {
         DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch at PC %#x "
@@ -833,7 +835,8 @@ Fetch::tick()
         status_change =  status_change || updated_status;
     }
 
-    DPRINTF(Fetch, "Running stage.\n");
+    // JV TODO SHH
+    //DPRINTF(Fetch, "Running stage.\n");
 
     if (FullSystem) {
         if (fromCommit->commitInfo[0].interruptPending) {
@@ -887,9 +890,10 @@ Fetch::tick()
         if (!stalls[tid].decode && !fetchQueue[tid].empty()) {
             const auto& inst = fetchQueue[tid].front();
             toDecode->insts[toDecode->size++] = inst;
-            DPRINTF(Fetch, "[tid:%i] [sn:%llu] Sending instruction to decode "
-                    "from fetch queue. Fetch queue size: %i.\n",
-                    tid, inst->seqNum, fetchQueue[tid].size());
+            // JV TODO: SHH
+            //DPRINTF(Fetch,"[tid:%i] [sn:%llu] Sending instruction to decode "
+            //        "from fetch queue. Fetch queue size: %i.\n",
+            //        tid, inst->seqNum, fetchQueue[tid].size());
 
             wroteToTimeBuffer = true;
             fetchQueue[tid].pop_front();
@@ -1034,11 +1038,15 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
 
     instruction->setThreadState(cpu->thread[tid]);
 
-    DPRINTF(Fetch, "[tid:%i] Instruction PC %s created [sn:%lli].\n",
-            tid, this_pc, seq);
-
-    DPRINTF(Fetch, "[tid:%i] Instruction is: %s\n", tid,
+    // JV TODO SHH (merged these into one line
+    DPRINTF(Fetch, "[tid:%i] Inst: PC= %s created [sn:%lli]. is %s\n",
+            tid, this_pc, seq,
             instruction->staticInst->disassemble(this_pc.instAddr()));
+    //DPRINTF(Fetch, "[tid:%i] Instruction PC %s created [sn:%lli].\n",
+    //        tid, this_pc, seq);
+
+    //DPRINTF(Fetch, "[tid:%i] Instruction is: %s\n", tid,
+    //        instruction->staticInst->disassemble(this_pc.instAddr()));
 
 #if TRACING_ON
     if (trace) {
@@ -1058,8 +1066,9 @@ Fetch::buildInst(ThreadID tid, StaticInstPtr staticInst,
     assert(numInst < fetchWidth);
     fetchQueue[tid].push_back(instruction);
     assert(fetchQueue[tid].size() <= fetchQueueSize);
-    DPRINTF(Fetch, "[tid:%i] Fetch queue entry created (%i/%i).\n",
-            tid, fetchQueue[tid].size(), fetchQueueSize);
+    // JV TODO SHH
+    //DPRINTF(Fetch, "[tid:%i] Fetch queue entry created (%i/%i).\n",
+    //        tid, fetchQueue[tid].size(), fetchQueueSize);
     //toDecode->insts[toDecode->size++] = instruction;
 
     // Keep track of if we can take an interrupt at this boundary
@@ -1533,7 +1542,8 @@ Fetch::pipelineIcacheAccesses(ThreadID tid)
 void
 Fetch::profileStall(ThreadID tid)
 {
-    DPRINTF(Fetch,"There are no more threads available to fetch from.\n");
+    // JV TODO SHH
+    //DPRINTF(Fetch,"There are no more threads available to fetch from.\n");
 
     // @todo Per-thread stats
 

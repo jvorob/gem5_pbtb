@@ -692,46 +692,56 @@ Decode::decodeInsts(ThreadID tid)
         }
 #endif
 
-        // Ensure that if it was predicted as a branch, it really is a
-        // branch.
-        if (inst->readPredTaken() && !inst->isControl()) {
-            panic("Instruction predicted as a branch!");
+        // TODO JV TEMP: DON'T CHECK BRANCHES, LET PBTB DRIVE IT
+        // // Ensure that if it was predicted as a branch, it really is a
+        // // branch.
+        // if (inst->readPredTaken() && !inst->isControl()) {
+        //     panic("Instruction predicted as a branch!");
 
-            ++stats.controlMispred;
+        //     ++stats.controlMispred;
 
-            // Might want to set some sort of boolean and just do
-            // a check at the end
-            squash(inst, inst->threadNumber);
+        //     // Might want to set some sort of boolean and just do
+        //     // a check at the end
+        //     squash(inst, inst->threadNumber);
 
-            break;
+        //     break;
+        // }
+
+        if (inst->readPredTaken()) {
+            DPRINTF(Decode,
+                    "[tid:%i] [sn:%llu] "
+                    "JV: PBTB predicted a branch to: %s\n",
+                    //(op target: %s\n)",
+                    tid, inst->seqNum, inst->readPredTarg());
+                    //, *(inst->branchTarget()));
         }
+        //TODO JV TEMP: Don't check branches! Default to predicted target??
+        // // Go ahead and compute any PC-relative branches.
+        // // This includes direct unconditional control and
+        // // direct conditional control that is predicted taken.
+        // if (inst->isDirectCtrl() &&
+        //    (inst->isUncondCtrl() || inst->readPredTaken()))
+        // {
+        //     ++stats.branchResolved;
 
-        // Go ahead and compute any PC-relative branches.
-        // This includes direct unconditional control and
-        // direct conditional control that is predicted taken.
-        if (inst->isDirectCtrl() &&
-           (inst->isUncondCtrl() || inst->readPredTaken()))
-        {
-            ++stats.branchResolved;
+        //     std::unique_ptr<PCStateBase> target = inst->branchTarget();
+        //     if (*target != inst->readPredTarg()) {
+        //         ++stats.branchMispred;
 
-            std::unique_ptr<PCStateBase> target = inst->branchTarget();
-            if (*target != inst->readPredTarg()) {
-                ++stats.branchMispred;
+        //         // Might want to set some sort of boolean and just do
+        //         // a check at the end
+        //         squash(inst, inst->threadNumber);
 
-                // Might want to set some sort of boolean and just do
-                // a check at the end
-                squash(inst, inst->threadNumber);
-
-                DPRINTF(Decode,
-                        "[tid:%i] [sn:%llu] "
-                        "Updating predictions: Wrong predicted target: %s \
-                        PredPC: %s\n",
-                        tid, inst->seqNum, inst->readPredTarg(), *target);
-                //The micro pc after an instruction level branch should be 0
-                inst->setPredTarg(*target);
-                break;
-            }
-        }
+        //         DPRINTF(Decode,
+        //                 "[tid:%i] [sn:%llu] "
+        //                 "Updating predictions: Wrong predicted target: %s \
+        //                 PredPC: %s\n",
+        //                 tid, inst->seqNum, inst->readPredTarg(), *target);
+        //         //The micro pc after an instruction level branch should be 0
+        //         inst->setPredTarg(*target);
+        //         break;
+        //     }
+        // }
     }
 
     // If we didn't process all instructions, then we will need to block

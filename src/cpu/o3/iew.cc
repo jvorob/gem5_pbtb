@@ -1252,6 +1252,26 @@ IEW::executeInsts()
             !toCommit->squash[tid] ||
             toCommit->squashedSeqNum[tid] > inst->seqNum) {
 
+            // If a bmov gets here, we need to squash everything
+            // behind it in case precomputed branches were added/removed
+            if (inst->isBmov()) {
+                DPRINTF(IEW, "[tid:%i] [sn:%llu] Execute: "
+                        "Bmov detected.\n",
+                    tid, inst->seqNum);
+
+                squashDueToBranch(inst, tid);
+
+                //TODO JV: agh idk what this does
+                //ppMispredict->notify(inst);
+
+                //These aren't quite correct anymore
+                //if (inst->readPredTaken()) {
+                //    iewStats.predictedTakenIncorrect++;
+                //} else {
+                //    iewStats.predictedNotTakenIncorrect++;
+            }
+            /* TODO JV TEMP: Don't squash on branches, let PBTP handle it
+
             // Prevent testing for misprediction on load instructions,
             // that have not been executed.
             bool loadNotExecuted = !inst->isExecuted() && inst->isLoad();
@@ -1278,7 +1298,8 @@ IEW::executeInsts()
                 } else {
                     iewStats.predictedNotTakenIncorrect++;
                 }
-            } else if (ldstQueue.violation(tid)) {
+            } else  */
+            if (ldstQueue.violation(tid)) {
                 assert(inst->isMemRef());
                 // If there was an ordering violation, then get the
                 // DynInst that caused the violation.  Note that this

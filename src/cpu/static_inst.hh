@@ -194,6 +194,9 @@ class StaticInst : public RefCounted, public StaticInstFlags
     bool isHtmStop() const { return flags[IsHtmStop]; }
     bool isHtmCancel() const { return flags[IsHtmCancel]; }
 
+    //todo JV
+    bool isBmov() const { return flags[IsBmov]; }
+
     bool
     isHtmCmd() const
     {

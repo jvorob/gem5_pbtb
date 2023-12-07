@@ -813,22 +813,22 @@ decode QUADRANT default Unknown::unknown() {
             format BmovOp {
                 0x0: bmovs({{
                     xc->setPBTB(0, RD, rvSext(Rs1_sd + imm));
-                }});
+                }}, IsBmov);
                 0x1: bmovt({{
                     xc->setPBTB(1, RD, rvSext(Rs1_sd + imm));
-                }});
+                }}, IsBmov);
                 0x4: bmovc_t({{
                     xc->setPBTB(4, RD, rvSext(Rs1_sd + imm));
-                }});
+                }}, IsBmov);
                 0x5: bmovc_l({{
                     xc->setPBTB(5, RD, rvSext(Rs1_sd + imm));
-                }});
+                }}, IsBmov);
                 0x6: bmovc_b({{
                     xc->setPBTB(6, RD, rvSext(Rs1_sd + imm));
-                }});
+                }}, IsBmov);
                 0x7: bmovc_bc({{
                     xc->setPBTB(7, RD, rvSext(Rs1_sd + imm));
-                }});
+                }}, IsBmov);
             }
         }
 

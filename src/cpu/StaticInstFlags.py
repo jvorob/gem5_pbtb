@@ -88,4 +88,5 @@ class StaticInstFlags(Enum):
         "IsHtmStart",  # Starts a HTM transaction
         "IsHtmStop",  # Stops (commits) a HTM transaction
         "IsHtmCancel",  # Explicitely aborts a HTM transaction
+        "IsBmov",  # TODO JV: is a bmov op
     ]

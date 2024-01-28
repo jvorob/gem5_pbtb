@@ -1481,32 +1481,49 @@ const char* PrecomputedBTB::BranchTypeCodes[] = {"N/A", "TKN", "LOP",
 const char* PrecomputedBTB::BranchTypeStrs[] = { "NoBranch", "Taken", "Loop",
                                                  "ShiftBit", "ShiftBit_Clear"};
 
-void
-PrecomputedBTB::debugDump() {
+void PrecomputedBTB::debugDump(int regstart, int regstop) {
     //TODO: make these DPRINTF? (need to define my own debug flag somewhere)
-    printf("PBTB: {\n");
-    for (int i = 0; i < NUM_REGS; i++) {
-        auto branchCode = BranchTypeCodes[reg_cond_type[i]];
+    printf("PBTB (%d CPs, fst=%d, lst=%d): {\n",
+            numActiveCheckpoints(), first_checkp, last_checkp);
 
-        printf("  %2i: SRC=%8lx TGT=%8lx | %s: %ld %ld\n", i,
-                (uint64_t)reg_source[i],
-                (uint64_t)reg_target[i],
+    regstart = std::max(0, regstart);
+    regstop = std::min(NUM_REGS, regstop);
+    int numtoprint = regstop - regstart;
+
+    // If skipping some regs at the start, show that
+    if (numtoprint > 0 && regstart > 0) { printf("  ...\n"); }
+
+    struct pbtb_map *curr_map = &maps[last_checkp];
+    for (int reg = regstart; reg < regstop; reg++) {
+        auto branchCode = BranchTypeCodes[curr_map->cond_type[reg]];
+
+        printf("  %2i: SRC=%8lx TGT=%8lx | %s: %ld %ld\n", reg,
+                (uint64_t)curr_map->source[reg],
+                (uint64_t)curr_map->target[reg],
                 branchCode,
-                reg_cond_val[i],
-                reg_cond_aux_val[i]);
+                curr_map->cond_val[reg],
+                curr_map->cond_aux_val[reg]);
     }
+
+    // If skipping some regs at the start, show that
+    if (numtoprint > 0 && regstop < NUM_REGS) { printf("  ...\n"); }
+
+    // I guess also handle the edge case where we omit them all
+    if (numtoprint == 0) { printf("  ...\n"); }
 
     printf("}\n");
 }
 
+void PrecomputedBTB::debugDump() { debugDump(0, NUM_REGS); }
+
 
 void PrecomputedBTB::setSource(int breg, Addr source_addr) {
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
-    reg_source[breg] = source_addr;
+    maps[last_checkp].source[breg] = source_addr;
 }
 void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
-    reg_target[breg] = target_addr;
+    maps[last_checkp].target[breg] = target_addr;
 }
 
 // Sets the condition for a given branch
@@ -1517,41 +1534,58 @@ void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
 // - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
 //     many bits of regval loop to form the pattern
 //
-void PrecomputedBTB::setCondition(int breg,
+void PrecomputedBTB::setCondition(const InstSeqNum &seqNum,
+                                  int breg,
                                   BranchType conditionType,
                                   uint64_t val) {
+    //LATER TODO: we shouldn't actually need checkpoints on bmovs, only on
+    // branches (whether real or false positives)
+    // However, we can't make that work until we have branches stall in decode
+    // when bmovs are in flight
+    squashYoungerCheckpoints(seqNum);
+
+    // need to squash all ops older than seqnum (or == seqnum, if the bmov
+    // itself was mispredicted as a branch)
+    //TODO: make a new checkpoint every time we set a condition
+    //makeNewCheckpoint(seqNum);
+
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
     switch (conditionType) {
         case NoBranch:
         case Taken:
-            reg_cond_type[breg]    = conditionType;
-            reg_cond_val[breg]     = 0;
+            maps[last_checkp].cond_type[breg]    = conditionType;
+            maps[last_checkp].cond_val[breg]     = 0;
+            maps[last_checkp].cond_aux_val[breg] = 0;
             break;
         case LoopN:
-            reg_cond_type[breg]    = conditionType;
-            reg_cond_val[breg]     = val;
+            maps[last_checkp].cond_type[breg]    = conditionType;
+            maps[last_checkp].cond_val[breg]     = val;
+            maps[last_checkp].cond_aux_val[breg] = 0;
             break;
         case ShiftBit:
-        case ShiftBit_Clear:
-            reg_cond_type[breg]    = ShiftBit;
+            maps[last_checkp].cond_type[breg]    = ShiftBit;
 
-            if (conditionType == ShiftBit_Clear) { //clear fifo
-                reg_cond_val[breg]     = 0; // bits
-                reg_cond_aux_val[breg] = 0; // num_bits
-            }
+            //if (conditionType == ShiftBit_Clear) { //clear fifo
+            //    maps[last_checkp].cond_val[breg]     = 0; // bits
+            //    maps[last_checkp].cond_aux_val[breg] = 0; // num_bits
+            //}
 
             // Bits shifted out at LSB, shifted in at bit N,
             // where N is current size of array
             // e.g. if curr_size == e.g. 3 bits, next bit comes in at bit 3
-            reg_cond_val[breg]     |= (val?1:0) << reg_cond_aux_val[breg];
-            reg_cond_aux_val[breg] += 1; // num_bits
+            maps[last_checkp].cond_val[breg] |= (val?1:0) <<
+                                maps[last_checkp].cond_aux_val[breg];
+            maps[last_checkp].cond_aux_val[breg] += 1; // num_bits++
 
-            // stay away from the sign bit just to be safe
-            assert(reg_cond_aux_val[breg] <= 63);
+            // make sure we don't touch the sign bit (just to be safe)
+            assert(maps[last_checkp].cond_aux_val[breg] <= 63);
             //TODO: handle overflow propely?
             break;
+        case ShiftBit_Clear:
+        default:
+            panic("Unrecognized conditiontype in PBTB");
+            break;
     }
-    reg_cond_type[breg] = conditionType;
 }
 
 
@@ -1577,7 +1611,7 @@ bool PrecomputedBTB::isBranch(const StaticInstPtr &inst,
                               ThreadID tid) {
 
     // TODO verify that inst breg matches lookup-ed breg
-    // TODO: handle checkpointing?
+    // TODO: make loop/shift stall if no data
 
     //auto target = std::make_unique<GenericISA::SimplePCState<4>>();
     // TODO: everywhere else uses a unique_ptr<PCState>, is there a reason for
@@ -1588,12 +1622,14 @@ bool PrecomputedBTB::isBranch(const StaticInstPtr &inst,
     int breg = -1; // If found, match will go here
     BranchType type = NoBranch; // If match found, type will go here
 
+
+
     // ==== Loop to find first breg matching the source addr
     for (int i = 0; i < NUM_REGS; i++) {
-        if (reg_source[i] == pc.instAddr()) {
+        if (maps[last_checkp].source[i] == pc.instAddr()) {
             //Found a match!
             breg = i;
-            type = reg_cond_type[i];
+            type = maps[last_checkp].cond_type[i];
             break;
         }
     }
@@ -1603,29 +1639,63 @@ bool PrecomputedBTB::isBranch(const StaticInstPtr &inst,
     //       if type != NoBranch
     bool pred_taken;
 
+    struct pbtb_map *curr_map = &maps[last_checkp];
+
     if (type == NoBranch) {
         pred_taken = false;
     } else if (type == Taken) {
         pred_taken = true;
 
+        DPRINTF(Fetch, "PBTB (F): HIT b%d: TKN 0x%x -> 0x%x\n",
+                breg, 0xffff, 0xffff);
+
     } else if (type == LoopN) {
-        if (reg_cond_val[breg] > 0) {
+        DPRINTF(Fetch, "PBTB (F): HIT b%d: LOOP{%d} 0x%x -> 0x%x\n",
+                breg, curr_map->cond_val[breg], 0xffff, 0xffff);
+
+        makeNewCheckpoint(seqNum);
+        curr_map = &maps[last_checkp];
+
+        DPRINTF(Fetch, "PBTB (F): \\-> New checkp #%d\n", last_checkp);
+
+        if (curr_map->cond_val[breg] > 0) {
             pred_taken = true;
-            reg_cond_val[breg]--; // careful so we don't underflow
-        } else {
+            curr_map->cond_val[breg]--;
+        } else if (curr_map->cond_val[breg] == 0) {
             pred_taken = false;
+            curr_map->cond_val[breg] = -1;
+        } else {
+            // LOOP EXHAUSTED: STALL
+            pred_taken = false;
+            DPRINTF(Fetch, "PBTB (F): Loop at -1: ERROR\n");
+            printf("PBTB: Loop at -1: ERROR\n");
+            //TODO: make this stall? for now it'll just get squashed
         }
 
     } else if (type == ShiftBit) {
+        uint64_t bits = curr_map->cond_val[breg];
+        uint64_t numbits = curr_map->cond_aux_val[breg];
+        DPRINTF(Fetch, "PBTB (F): HIT b%d: BIT{%s} (%s) 0x%x -> 0x%x\n",
+                breg, debugPrintBottomBits(bits,numbits),
+                (bits&1) ? "T" : "NT", 0xffff, 0xffff);
+
+        makeNewCheckpoint(seqNum);
+        curr_map = &maps[last_checkp];
+
+        DPRINTF(Fetch, "PBTB (F): \\-> New checkp #%d\n", last_checkp);
+
         // cond_val holds bits, cond_aux_val is number of bits valid
-        if (reg_cond_aux_val[breg] == 0) { //if num_bits > 0
-            pred_taken = reg_cond_val[breg] & 0x1;
-            reg_cond_val[breg] >>= 1; // shift out bottom bit
-            reg_cond_aux_val[breg]--; // bits-- (don't underflow!)
+        if (curr_map->cond_aux_val[breg] > 0) { //if num_bits > 0
+            pred_taken = curr_map->cond_val[breg] & 0x1;
+            curr_map->cond_val[breg] >>= 1; // shift out bottom bit
+            curr_map->cond_aux_val[breg]--; // bits-- (don't underflow!)
         } else { // no bits, default to false
             //TODO: warn about this somehow? ISA-wise this feels
             // like a compiler error or a mis-speculation issue
             pred_taken = false;
+            printf("PBTB: ShiftBit out of bits: ERROR\n");
+            DPRINTF(Fetch, "PBTB (F): ShiftBit out of bits: ERROR\n");
+            //TODO: make this stall? for now it'll just get squashed
         }
     } else {
         assert(false); // Unrecognized pbtb entry type, crash out
@@ -1636,7 +1706,7 @@ bool PrecomputedBTB::isBranch(const StaticInstPtr &inst,
     // Return next-fetched PC through pc arg
     if (pred_taken){
         assert(breg >= 0); // breg guaranteed to be valid
-        target.set(reg_target[breg]);
+        target.set(curr_map->target[breg]);
         set(pc, target);
         return true; //  taken
 

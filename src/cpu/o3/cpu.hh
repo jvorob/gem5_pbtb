@@ -68,6 +68,8 @@
 #include "cpu/base.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/timebuf.hh"
+#include "debug/Exec.hh" //JV TODO DEBUG TEMP
+#include "debug/Fetch.hh" //JV TODO DEBUG TEMP
 #include "params/BaseO3CPU.hh"
 #include "sim/process.hh"
 
@@ -116,6 +118,23 @@ class PrecomputedBTB
     const static char* BranchTypeStrs[];
 
     const static int NUM_REGS = 32;
+    const static int MAX_CHECKPOINTS = 32;
+
+    //Each checkpoint stores all this data
+    struct pbtb_map
+    {
+        InstSeqNum seqNum; //The branch inst that started this checkpoint
+        Addr       source[NUM_REGS]; // All addresses are absolute
+        Addr       target[NUM_REGS];
+        BranchType cond_type[NUM_REGS];  //defaults to NoBranch
+        int64_t   cond_val[NUM_REGS];
+        int64_t   cond_aux_val[NUM_REGS]; //for shiftreg, counts number
+                                                    //of bits held
+    } maps[MAX_CHECKPOINTS] = {}; // all initialize to 0
+
+
+    //struct pbtp_map map;
+
 
     //TODO remove this? I'm using shortcodes??
     const static char* BranchTypeToStr(BranchType b, bool verbose){
@@ -130,17 +149,114 @@ class PrecomputedBTB
     }
 
   private:
-    //Constructor: initializes all to 0
-    Addr       reg_source[NUM_REGS] = {}; // All addresses are absolute
-    Addr       reg_target[NUM_REGS] = {};
-    BranchType reg_cond_type[NUM_REGS] = {};  //defaults to NoBranch
-    uint64_t   reg_cond_val[NUM_REGS] = {};
-    uint64_t   reg_cond_aux_val[NUM_REGS] = {}; //for shiftreg, counts number
+    ////Constructor: initializes all to 0
+    //Addr       reg_source[NUM_REGS] = {}; // All addresses are absolute
+    //Addr       reg_target[NUM_REGS] = {};
+    //BranchType reg_cond_type[NUM_REGS] = {};  //defaults to NoBranch
+    //uint64_t   reg_cond_val[NUM_REGS] = {};
+    //uint64_t   reg_cond_aux_val[NUM_REGS] = {}; //for shiftreg, counts number
                                                 //of bits held
 
+    // maps[] is a circular buffer of checkpoints
+    // We start with one valid (first == last), and always have >=1 valid
+    // we're full if (last+1)%MAX_CHECKPOINTS == first
+    int first_checkp = 0; // Oldest valid checkp,
+                          // we should never roll back before this
+    int last_checkp = 0; // Latest (current) checkp
+
+    static inline char debug_bit_buff[65];
+    const static char* debugPrintBottomBits(uint64_t bits, int n) {
+        debug_bit_buff[64] = '\0'; //null terminate just to be safe
+        n = std::min(n, 64);
+
+        int i;
+        for (i = 0; i < n; i++) {
+            int bit_offset = n - i - 1; //1st digit is at (bits >> (n-1))
+            int bit = (bits >> bit_offset) & 1;
+            debug_bit_buff[i] = bit ? '1':'0';
+        }
+        debug_bit_buff[i] = '\0';
+        return debug_bit_buff;
+    }
   public:
     //print out
     void debugDump();
+    // Limits which regs to print (to limit output). Inclusive/exclusive
+    void debugDump(int regstart, int regstop);
+
+    // Will always be in range 1 .. MAX_CHECKPOINTS, inclusive
+    int numActiveCheckpoints() {
+        int simple_count = last_checkp - first_checkp + 1;
+        if (last_checkp < first_checkp) { //will be negative
+            return simple_count + MAX_CHECKPOINTS;
+        } else {
+            return simple_count;
+        }
+    };
+
+    bool outOfCheckpoints() {
+        return numActiveCheckpoints() >= MAX_CHECKPOINTS;
+    };
+
+    // e.g. fetching branch A triggered a checkpoint and modified the pbtb.
+    // Once A retires, we know A is not speculative, so all older
+    // checkpoints can be discarded
+    void commitOldCheckpoints(InstSeqNum committedSeqNum) {
+        while (first_checkp != last_checkp) { // always leave at least 1 checkp
+
+            // If checkpoint is older, clear it
+            if (maps[first_checkp].seqNum < committedSeqNum) {
+                printf("PBTB: clearing checkpoint %d, seqnum %ld\n",
+                        first_checkp, maps[first_checkp].seqNum);
+                maps[first_checkp] = {};
+                first_checkp = (first_checkp+1) % MAX_CHECKPOINTS;
+            } else {
+                return;
+            }
+        }
+    }
+
+    void squashYoungerCheckpoints(InstSeqNum correctSeqNum) {
+        DPRINTF(Exec,"PBTB (X): BMOV executed, clearing checkpoints\n");
+        while (last_checkp != first_checkp) { // always leave at least 1 checkp
+            DPRINTF(Exec,"PBTB (X): clearing checkpoint %d, seqnum %ld\n",
+                    last_checkp, maps[last_checkp].seqNum);
+
+            // If checkpoint is younger, squash it
+            // NOTE: if we mispredicted this as a branch and checkpointed on it
+            //       we need to make sure we discard that, since it wasnt a br
+            if (maps[last_checkp].seqNum <= correctSeqNum) {
+                DPRINTF(Exec,"PBTB (X): clearing checkpoint %d, seqnum %ld\n",
+                        last_checkp, maps[last_checkp].seqNum);
+                printf("PBTB: clearing checkpoint %d, seqnum %ld\n",
+                        last_checkp, maps[last_checkp].seqNum);
+                maps[last_checkp] = {};
+
+                // Shift down 1 (modulo doesn't work with negatives)
+                last_checkp = (last_checkp + MAX_CHECKPOINTS - 1)
+                              % MAX_CHECKPOINTS;
+            } else {
+                return;
+            }
+        }
+    }
+
+    // MUST ONLY BE CALLED IF WE HAVE ROOM FOR A NEW CHECKPOINT
+    // Clones current state into a new CP, sets last_checkp to point to it
+    void makeNewCheckpoint(InstSeqNum newSeqNum) {
+        if (numActiveCheckpoints() == MAX_CHECKPOINTS) {
+            panic("Too many checkpoints in pbtbp\n");
+        }
+
+
+        int new_checkp = (last_checkp+1)%MAX_CHECKPOINTS;
+        maps[new_checkp] = maps[last_checkp];
+        maps[new_checkp].seqNum = newSeqNum;
+        last_checkp = new_checkp;
+
+        DPRINTF(Fetch,"PBTB (F): made new checkpoint %d, seqnum %ld\n",
+                last_checkp, maps[last_checkp].seqNum);
+    }
 
 
     void setSource(int breg, Addr source_addr);
@@ -154,7 +270,8 @@ class PrecomputedBTB
     // - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
     //     many bits of regval loop to form the pattern
     //
-    void setCondition(int breg, BranchType conditionType, uint64_t val);
+    void setCondition(const InstSeqNum &seqNum,
+                      int breg, BranchType conditionType, uint64_t val);
 
 
     // FUTURE THOUGHTS FOR SPECULATIVE EXECUTION:

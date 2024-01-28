@@ -1058,24 +1058,26 @@ class DynInst : public ExecContext, public RefCounted
                 cpu->PBTB.setTarget(btb_slot, addr);
                 break;
             case BMOV_FUNCT3_C_TAKEN:
-                cpu->PBTB.setCondition(btb_slot,
-                        PrecomputedBTB::BranchType::Taken, 1);
+                cpu->PBTB.setCondition(seqNum,
+                        btb_slot, PrecomputedBTB::BranchType::Taken, 1);
                 break;
             case BMOV_FUNCT3_C_LOOP:
-                cpu->PBTB.setCondition(btb_slot,
-                        PrecomputedBTB::BranchType::LoopN, addr);
+                cpu->PBTB.setCondition(seqNum,
+                        btb_slot, PrecomputedBTB::BranchType::LoopN, addr);
                 break;
             case BMOV_FUNCT3_C_BIT:
-                cpu->PBTB.setCondition(btb_slot,
-                        PrecomputedBTB::BranchType::ShiftBit, addr);
+                cpu->PBTB.setCondition(seqNum,
+                        btb_slot, PrecomputedBTB::BranchType::ShiftBit, addr);
                 break;
             case BMOV_FUNCT3_C_BITCLEAR:
-                cpu->PBTB.setCondition(btb_slot,
-                        PrecomputedBTB::BranchType::ShiftBit_Clear, addr);
+                panic("unsupported bitclear in PBTB\n");
+                // cpu->PBTB.setCondition(seqNum, btb_slot,
+                //         PrecomputedBTB::BranchType::ShiftBit_Clear, addr);
                 break;
         }
 
-        cpu->PBTB.debugDump();
+        //TODO JV TEMP: for now let's just show the first 8
+        cpu->PBTB.debugDump(0, 8);
         return;
     }
 

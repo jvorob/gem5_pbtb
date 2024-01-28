@@ -305,8 +305,8 @@ class Fetch
     bool checkInterrupt(Addr pc) { return interruptPending; }
 
     /** Squashes a specific thread and resets the PC. */
-    void doSquash(const PCStateBase &new_pc, const DynInstPtr squashInst,
-            ThreadID tid);
+    void doSquash(const PCStateBase &new_pc, const InstSeqNum seq_num,
+            const DynInstPtr squashInst, ThreadID tid);
 
     /** Squashes a specific thread and resets the PC. Also tells the CPU to
      * remove any instructions between fetch and decode

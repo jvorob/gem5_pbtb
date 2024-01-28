@@ -1252,6 +1252,7 @@ IEW::executeInsts()
             !toCommit->squash[tid] ||
             toCommit->squashedSeqNum[tid] > inst->seqNum) {
 
+            // JV BMOV
             // If a bmov gets here, we need to squash everything
             // behind it in case precomputed branches were added/removed
             if (inst->isBmov()) {

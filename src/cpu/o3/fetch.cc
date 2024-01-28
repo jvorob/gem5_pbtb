@@ -685,7 +685,8 @@ Fetch::finishTranslation(const Fault &fault, const RequestPtr &mem_req)
 }
 
 void
-Fetch::doSquash(const PCStateBase &new_pc, const DynInstPtr squashInst,
+Fetch::doSquash(const PCStateBase &new_pc, const InstSeqNum seq_num,
+        const DynInstPtr squashInst,
         ThreadID tid)
 {
     DPRINTF(Fetch, "[tid:%i] Squashing, setting PC to: %s.\n",
@@ -709,6 +710,8 @@ Fetch::doSquash(const PCStateBase &new_pc, const DynInstPtr squashInst,
                 tid);
         memReq[tid] = NULL;
     }
+
+    cpu->PBTB.squashYoungerCheckpoints(seq_num);
 
     // Get rid of the retrying packet if it was from this thread.
     if (retryTid == tid) {
@@ -741,7 +744,7 @@ Fetch::squashFromDecode(const PCStateBase &new_pc, const DynInstPtr squashInst,
 {
     DPRINTF(Fetch, "[tid:%i] Squashing from decode.\n", tid);
 
-    doSquash(new_pc, squashInst, tid);
+    doSquash(new_pc, seq_num, squashInst, tid);
 
     // Tell the CPU to remove any instructions that are in flight between
     // fetch and decode.
@@ -756,6 +759,11 @@ Fetch::checkStall(ThreadID tid) const
     if (stalls[tid].drain) {
         assert(cpu->isDraining());
         DPRINTF(Fetch,"[tid:%i] Drain stall detected.\n",tid);
+        ret_val = true;
+    }
+
+    if (cpu->PBTB.outOfCheckpoints()) {
+        DPRINTF(Fetch,"[tid:%i] PBTB Out of Checkpoints, stalling.\n",tid);
         ret_val = true;
     }
 
@@ -807,7 +815,7 @@ Fetch::squash(const PCStateBase &new_pc, const InstSeqNum seq_num,
 {
     DPRINTF(Fetch, "[tid:%i] Squash from commit.\n", tid);
 
-    doSquash(new_pc, squashInst, tid);
+    doSquash(new_pc, seq_num, squashInst, tid);
 
     // Tell the CPU to remove any instructions that are not in the ROB.
     cpu->removeInstsNotInROB(tid);
@@ -1284,11 +1292,20 @@ Fetch::fetch(bool &status_change)
             set(this_pc, *next_pc);
             inRom = isRomMicroPC(this_pc.microPC());
 
+
             if (newMacro) {
                 fetchAddr = this_pc.instAddr() & pc_mask;
                 blkOffset = (fetchAddr - fetchBufferPC[tid]) / instSize;
                 pcOffset = 0;
                 curMacroop = NULL;
+            }
+
+            if (cpu->PBTB.outOfCheckpoints()) {
+                DPRINTF(Fetch,
+                        "PBTB ran out of checkpoints, halting fetch!\n");
+                fetchStatus[tid] = Blocked;
+                status_change = true;
+                break;
             }
 
             if (instruction->isQuiesce()) {
@@ -1561,8 +1578,9 @@ Fetch::profileStall(ThreadID tid)
         DPRINTF(Fetch, "[tid:%i] Fetch is squashing!\n", tid);
     } else if (fetchStatus[tid] == IcacheWaitResponse) {
         cpu->fetchStats[tid]->icacheStallCycles++;
-        DPRINTF(Fetch, "[tid:%i] Fetch is waiting cache response!\n",
-                tid);
+        // JV TODO SHH
+        // DPRINTF(Fetch, "[tid:%i] Fetch is waiting cache response!\n",
+        //         tid);
     } else if (fetchStatus[tid] == ItlbWait) {
         ++fetchStats.tlbCycles;
         DPRINTF(Fetch, "[tid:%i] Fetch is waiting ITLB walk to "

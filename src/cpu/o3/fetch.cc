@@ -931,12 +931,15 @@ Fetch::checkSignalsAndUpdate(ThreadID tid)
     // Update the per thread stall statuses.
     if (fromDecode->decodeBlock[tid]) {
         stalls[tid].decode = true;
+        //TODO JV TEMP DEBUG
+        DPRINTF(Fetch, "!!!!!!!! JV: decodeBlock in Fetch::checksignals\n");
     }
 
     if (fromDecode->decodeUnblock[tid]) {
         assert(stalls[tid].decode);
         assert(!fromDecode->decodeBlock[tid]);
         stalls[tid].decode = false;
+        DPRINTF(Fetch, "!!!!!!!! JV: decodeUNBlock in Fetch::checksignals\n");
     }
 
     // Check squash signals from commit.

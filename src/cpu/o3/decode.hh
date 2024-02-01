@@ -236,10 +236,12 @@ class Decode
     TimeBuffer<FetchStruct>::wire fromFetch;
 
     /** Queue of all instructions coming from fetch this cycle. */
-    std::queue<DynInstPtr> insts[MaxThreads];
+    // TODO JV: swapped this to deque so I can push_front
+    std::deque<DynInstPtr> insts[MaxThreads];
 
     /** Skid buffer between fetch and decode. */
-    std::queue<DynInstPtr> skidBuffer[MaxThreads];
+    // TODO JV: swapped this to deque so I can push_front
+    std::deque<DynInstPtr> skidBuffer[MaxThreads];
 
     /** Variable that tracks if decode has written to the time buffer this
      * cycle. Used to tell CPU if there is activity this cycle.
@@ -293,6 +295,18 @@ class Decode
      *  instruction (used for MIPS).
      */
     bool squashAfterDelaySlot[MaxThreads];
+
+
+    // ======== JV PBTB ADDITIONS
+    // For a given pb inst: will return true if all bmovs
+    //   ahead have executed
+    bool isPBReadyToFinalize(DynInstPtr inst) const;
+
+    //state:
+    InstSeqNum lastDecodedInst;
+    InstSeqNum lastDoneFromCommit;
+    // InstSeqNum lastSquashFromCommit; // I dont think im using/need this one?
+    // ======= END JV PBTB ADDITIONS
 
     struct DecodeStats : public statistics::Group
     {

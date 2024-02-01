@@ -111,6 +111,12 @@ Decode::resetStage()
 
         stalls[tid].rename = false;
     }
+
+
+    // TODO JV: Is this necessary? is this the right place for it?
+    lastDecodedInst      = 0;
+    lastDoneFromCommit   = 0;
+    //lastSquashFromCommit = 0;
 }
 
 std::string
@@ -223,6 +229,31 @@ Decode::checkStall(ThreadID tid) const
         ret_val = true;
     }
 
+
+    // ===== TODO JV: PBTB:
+    // if next inst is a placeholder branch,
+    // we have to stall until it's ready to finalize (all bmovs have executed)
+    // For now we're going to stall much more coarsely just to get it working
+
+    bool readingFromSkid = (decodeStatus[tid] == Blocked
+                         || decodeStatus[tid] == Unblocking);
+    const std::deque<DynInstPtr>
+        &insts_to_decode = readingFromSkid ?  skidBuffer[tid] : insts[tid];
+
+    if (insts_to_decode.size() > 0) {
+        DynInstPtr inst = insts_to_decode.front();
+
+        if (inst->isDirectCtrl() && !isPBReadyToFinalize(inst))
+        {
+            DPRINTF(Decode,"[tid:%i] Stalling for pb finalize "
+                           "(in checkStall)\n", tid);
+            ret_val = true;
+        }
+    }
+
+
+
+
     return ret_val;
 }
 
@@ -231,6 +262,22 @@ Decode::fetchInstsValid()
 {
     return fromFetch->size > 0;
 }
+
+// =============== JV PBTB FUNCS
+
+bool Decode::isPBReadyToFinalize(DynInstPtr inst) const {
+    DPRINTF(Decode,"[tid:X] isPBReadyToFinalize lastDecoded=%d, "
+            "lastCommitted=%d\n", lastDecodedInst, lastDoneFromCommit);
+
+    if (lastDoneFromCommit >= lastDecodedInst) {
+        return true;
+    }
+
+    return false;
+    //TODO v1: assert isControl, check if last decoded op has committed
+    //TODO v2: track last executed bmov? check stalls? ???
+}
+// =============== END JV PBTB FUNCS
 
 bool
 Decode::block(ThreadID tid)
@@ -326,11 +373,11 @@ Decode::squash(const DynInstPtr &inst, ThreadID tid)
     // Clear the instruction list and skid buffer in case they have any
     // insts in them.
     while (!insts[tid].empty()) {
-        insts[tid].pop();
+        insts[tid].pop_front();
     }
 
     while (!skidBuffer[tid].empty()) {
-        skidBuffer[tid].pop();
+        skidBuffer[tid].pop_front();
     }
 
     // Squash instructions up until this one
@@ -374,11 +421,11 @@ Decode::squash(ThreadID tid)
     // Clear the instruction list and skid buffer in case they have any
     // insts in them.
     while (!insts[tid].empty()) {
-        insts[tid].pop();
+        insts[tid].pop_front();
     }
 
     while (!skidBuffer[tid].empty()) {
-        skidBuffer[tid].pop();
+        skidBuffer[tid].pop_front();
     }
 
     return squash_count;
@@ -392,11 +439,11 @@ Decode::skidInsert(ThreadID tid)
     while (!insts[tid].empty()) {
         inst = insts[tid].front();
 
-        insts[tid].pop();
+        insts[tid].pop_front();
 
         assert(tid == inst->threadNumber);
 
-        skidBuffer[tid].push(inst);
+        skidBuffer[tid].push_back(inst);
 
         DPRINTF(Decode, "Inserting [tid:%d][sn:%lli] PC: %s into decode "
                 "skidBuffer %i\n", inst->threadNumber, inst->seqNum,
@@ -466,7 +513,8 @@ Decode::sortInsts()
 {
     int insts_from_fetch = fromFetch->size;
     for (int i = 0; i < insts_from_fetch; ++i) {
-        insts[fromFetch->insts[i]->threadNumber].push(fromFetch->insts[i]);
+        insts[fromFetch->insts[i]->threadNumber].push_back(
+            fromFetch->insts[i]);
     }
 }
 
@@ -497,11 +545,57 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
     // Update the per thread stall statuses.
     readStallSignals(tid);
 
+    // DEBUG the from-commit signals
+    //DPRINTF(Decode, "[tid:%i] fromcommit DEBUGGING: "
+    //                "squash:%c doneSeqNum=%d\n",
+    //                tid, fromCommit->commitInfo[tid].squash ? 'T':'F',
+    //                    fromCommit->commitInfo[tid].doneSeqNum);
+
+
+
+    // ==== TODO JV PBTB: keep track of committed info
+    //                    for pb tracking
+    // If we committed this cycle then doneSeqNum will be > 0
+    if (fromCommit->commitInfo[tid].doneSeqNum != 0 &&
+        !fromCommit->commitInfo[tid].squash) {
+
+        InstSeqNum newNum = fromCommit->commitInfo[tid].doneSeqNum;
+        DPRINTF(Decode, "[tid:%i] BMOV Tracking: new done inst:%d"
+                "from commit.\n", tid, newNum);
+        assert(newNum >= lastDoneFromCommit);
+        lastDoneFromCommit = newNum;
+    }
+
     // Check squash signals from commit.
     if (fromCommit->commitInfo[tid].squash) {
 
         DPRINTF(Decode, "[tid:%i] Squashing instructions due to squash "
                 "from commit.\n", tid);
+
+
+        //TODO JV PBTB: also track squash nums?
+        InstSeqNum squashSeqNum = fromCommit->commitInfo[tid].doneSeqNum;
+        // everything with seq>squashSeqNum is gone
+
+        DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
+                "squash@%d, lastCommited=%d."
+                " Moving lastDecoded up to squash\n",
+                tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
+        // We've squashed some in-flight instructions, so we no longer
+        // need to wait for lastDecodedInst, just the last non-squashed inst
+        assert(squashSeqNum >= lastDoneFromCommit); // sanity check?
+        if (lastDecodedInst > squashSeqNum) {
+            DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
+                    "squash@%d, lastCommited=%d."
+                    " Moving lastDecoded up to squash\n",
+                    tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
+            lastDecodedInst = squashSeqNum;
+            //TODO: once we track specifically the last bmov, it'll be
+            // a little trickier to do
+
+        }
+        //(fromCommit->commitInfo[tid].doneSeqNum, tid);
+        //lastSquashFromCommit = newSquashNum;
 
         squash(tid);
 
@@ -640,7 +734,7 @@ Decode::decodeInsts(ThreadID tid)
         ++stats.runCycles;
     }
 
-    std::queue<DynInstPtr>
+    std::deque<DynInstPtr>
         &insts_to_decode = decodeStatus[tid] == Unblocking ?
         skidBuffer[tid] : insts[tid];
 
@@ -651,7 +745,7 @@ Decode::decodeInsts(ThreadID tid)
 
         DynInstPtr inst = std::move(insts_to_decode.front());
 
-        insts_to_decode.pop();
+        insts_to_decode.pop_front();
 
         DPRINTF(Decode, "[tid:%i] Processing instruction [sn:%lli] with "
                 "PC %s\n", tid, inst->seqNum, inst->pcState());
@@ -668,6 +762,22 @@ Decode::decodeInsts(ThreadID tid)
             continue;
         }
 
+        // TODO JV: change this to isPB
+        // TODO JV: pb AND not squashed (checked above)
+        // TODO: should this be isControl? what are the differences?
+        if (inst->isDirectCtrl() && !isPBReadyToFinalize(inst))
+        {
+            DPRINTF(Decode,"[tid:%i] Stalling for pb finalize\n", tid);
+            DPRINTF(Decode, "JV PBTB: Blocking branch in finalize"
+                            " (in decode)!\n");
+
+            insts_to_decode.push_front(inst);
+            // push_back has to happen first so block()
+            // can shift remaining insts to the skidbuffer correctly
+            block(tid);
+            break;
+        }
+
         // Also check if instructions have no source registers.  Mark
         // them as ready to issue at any time.  Not sure if this check
         // should exist here or at a later stage; however it doesn't matter
@@ -680,6 +790,13 @@ Decode::decodeInsts(ThreadID tid)
         // queue.  The next instruction may not be valid, so check to
         // see if branches were predicted correctly.
         toRename->insts[toRenameIndex] = inst;
+
+
+        // ==== TODO JV PBTB: count this as decoded
+        // TODO: make this only count bmovs
+        // Note: we know it's not squashed at this point)
+        assert(inst->seqNum > lastDecodedInst);
+        lastDecodedInst = inst->seqNum;
 
         ++(toRename->size);
         ++toRenameIndex;

@@ -68,6 +68,7 @@
 #include "cpu/base.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/timebuf.hh"
+#include "debug/Decode.hh" //JV TODO DEBUG TEMP
 #include "debug/Exec.hh" //JV TODO DEBUG TEMP
 #include "debug/Fetch.hh" //JV TODO DEBUG TEMP
 #include "params/BaseO3CPU.hh"
@@ -113,24 +114,37 @@ class PrecomputedBTB
         //      BRANCHTYPECODES AND BRANCHTYPETOSTR
     };
 
+    enum PBTBResultType
+    {
+        PR_NoMatch = 0,
+        PR_NotTaken,
+        PR_Taken,
+        PR_Exhaust,
+    };
+
     //3-character codes for each branch type
     const static char* BranchTypeCodes[];
     const static char* BranchTypeStrs[];
 
     const static int NUM_REGS = 32;
-    const static int MAX_CHECKPOINTS = 32;
+    //const static int MAX_CHECKPOINTS = 32;
 
     //Each checkpoint stores all this data
     struct pbtb_map
     {
-        InstSeqNum seqNum; //The branch inst that started this checkpoint
+        //InstSeqNum seqNum; //The branch inst that started this checkpoint
+        int64_t    version[NUM_REGS]; // ++ each time this breg is modified.
+                                      // (except for bmovc_bit, if appending)
         Addr       source[NUM_REGS]; // All addresses are absolute
         Addr       target[NUM_REGS];
         BranchType cond_type[NUM_REGS];  //defaults to NoBranch
         int64_t   cond_val[NUM_REGS];
         int64_t   cond_aux_val[NUM_REGS]; //for shiftreg, counts number
                                                     //of bits held
-    } maps[MAX_CHECKPOINTS] = {}; // all initialize to 0
+    };
+
+    struct pbtb_map map_fetch = {};
+    struct pbtb_map map_final = {}; // init to all 0s
 
 
     //struct pbtp_map map;
@@ -157,12 +171,6 @@ class PrecomputedBTB
     //uint64_t   reg_cond_aux_val[NUM_REGS] = {}; //for shiftreg, counts number
                                                 //of bits held
 
-    // maps[] is a circular buffer of checkpoints
-    // We start with one valid (first == last), and always have >=1 valid
-    // we're full if (last+1)%MAX_CHECKPOINTS == first
-    int first_checkp = 0; // Oldest valid checkp,
-                          // we should never roll back before this
-    int last_checkp = 0; // Latest (current) checkp
 
     static inline char debug_bit_buff[65];
     const static char* debugPrintBottomBits(uint64_t bits, int n) {
@@ -178,89 +186,20 @@ class PrecomputedBTB
         debug_bit_buff[i] = '\0';
         return debug_bit_buff;
     }
-  public:
-    //print out
-    void debugDump();
-    // Limits which regs to print (to limit output). Inclusive/exclusive
-    void debugDump(int regstart, int regstop);
-
-    // Will always be in range 1 .. MAX_CHECKPOINTS, inclusive
-    int numActiveCheckpoints() {
-        int simple_count = last_checkp - first_checkp + 1;
-        if (last_checkp < first_checkp) { //will be negative
-            return simple_count + MAX_CHECKPOINTS;
-        } else {
-            return simple_count;
-        }
-    };
-
-    bool outOfCheckpoints() {
-        return numActiveCheckpoints() >= MAX_CHECKPOINTS;
-    };
-
-    // e.g. fetching branch A triggered a checkpoint and modified the pbtb.
-    // Once A retires, we know A is not speculative, so all older
-    // checkpoints can be discarded
-    void commitOldCheckpoints(InstSeqNum committedSeqNum) {
-        while (first_checkp != last_checkp) { // always leave at least 1 checkp
-
-            // If checkpoint is older, clear it
-            if (maps[first_checkp].seqNum < committedSeqNum) {
-                printf("PBTB: clearing checkpoint %d, seqnum %ld\n",
-                        first_checkp, maps[first_checkp].seqNum);
-                maps[first_checkp] = {};
-                first_checkp = (first_checkp+1) % MAX_CHECKPOINTS;
-            } else {
-                return;
-            }
-        }
-    }
-
-    void squashYoungerCheckpoints(InstSeqNum correctSeqNum) {
-        DPRINTF(Exec,"PBTB (X): BMOV executed, clearing checkpoints\n");
-        while (last_checkp != first_checkp) { // always leave at least 1 checkp
-            DPRINTF(Exec,"PBTB (X): clearing checkpoint %d, seqnum %ld\n",
-                    last_checkp, maps[last_checkp].seqNum);
-
-            // If checkpoint is younger, squash it
-            // NOTE: if we mispredicted this as a branch and checkpointed on it
-            //       we need to make sure we discard that, since it wasnt a br
-            if (maps[last_checkp].seqNum <= correctSeqNum) {
-                DPRINTF(Exec,"PBTB (X): clearing checkpoint %d, seqnum %ld\n",
-                        last_checkp, maps[last_checkp].seqNum);
-                printf("PBTB: clearing checkpoint %d, seqnum %ld\n",
-                        last_checkp, maps[last_checkp].seqNum);
-                maps[last_checkp] = {};
-
-                // Shift down 1 (modulo doesn't work with negatives)
-                last_checkp = (last_checkp + MAX_CHECKPOINTS - 1)
-                              % MAX_CHECKPOINTS;
-            } else {
-                return;
-            }
-        }
-    }
-
-    // MUST ONLY BE CALLED IF WE HAVE ROOM FOR A NEW CHECKPOINT
-    // Clones current state into a new CP, sets last_checkp to point to it
-    void makeNewCheckpoint(InstSeqNum newSeqNum) {
-        if (numActiveCheckpoints() == MAX_CHECKPOINTS) {
-            panic("Too many checkpoints in pbtbp\n");
-        }
 
 
-        int new_checkp = (last_checkp+1)%MAX_CHECKPOINTS;
-        maps[new_checkp] = maps[last_checkp];
-        maps[new_checkp].seqNum = newSeqNum;
-        last_checkp = new_checkp;
-
-        DPRINTF(Fetch,"PBTB (F): made new checkpoint %d, seqnum %ld\n",
-                last_checkp, maps[last_checkp].seqNum);
-    }
+  private:
+    // ==================== PER-MAP Functions:
+    // If the system wasn't pipelined, these would be sufficient
+    // Each of these acts on a single pbtb_map in the straightforward way
 
 
-    void setSource(int breg, Addr source_addr);
-    void setTarget(int breg, Addr target_addr);
+    // Note: map_fetch and map_finalize should ONLY EVER DIFFER in number
+    // of loop iterations / shifted bits. All other modifications should apply
+    // simultaneously to both. map_commit (once it's in) might differ though
+
+    void m_setSource(struct pbtb_map *pmap, int breg, Addr source_addr);
+    void m_setTarget(struct pbtb_map *pmap, int breg, Addr target_addr);
 
     // Sets the condition for a given branch
     // immVal and regVal treated differently for different types?
@@ -269,29 +208,53 @@ class PrecomputedBTB
     // - TODO: LoopNotTaken?
     // - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
     //     many bits of regval loop to form the pattern
-    //
-    void setCondition(const InstSeqNum &seqNum,
+    void m_setCondition(struct pbtb_map *pmap,
+                      int breg, BranchType conditionType, uint64_t val);
+
+    // Queries a pmap (consuming bits in the process)
+    // returns a resultType describing whether a match was found and what kind
+    // If a match is found, sets p_breg_out, p_version_out
+    // If the match is a taken branch, sets p_targetAddr_out
+    PBTBResultType m_queryPC(struct pbtb_map *pmap, Addr pcAddr,
+            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
+
+  public:
+    // ================== External-interface functions
+    // These should modify both map_fetch and map_final
+    // TODO: eventually these might need to modify commit?
+    // NOTE: we SHOULDNT need a seq num for bmovc anymore, but we might need
+    // it if we do checkpointing again and I'm too lazy to take it out rn
+    void setSource(int breg, Addr source_addr);
+    void setTarget(int breg, Addr target_addr);
+    void setCondition(InstSeqNum seqNum,
                       int breg, BranchType conditionType, uint64_t val);
 
 
-    // FUTURE THOUGHTS FOR SPECULATIVE EXECUTION:
-    // - Fetch stage will ask us to predict a branch, and we need to
-    //   decrement/shift  when we do so.
-    // - Do we checkpoint everytime a branch is requested until it's committed?
-    // - Do we decrement/undo if that branch op is squashed?
-    // - How do we handle speculative bmovs?
-    //
+    // Overwrite map_fetch with map_finalize
+    void squashFinalizeToFetch();
 
-    /** (JV: Copied from BPredUnit::predict(...))
-        * Returns whether or not the inst is a taken branch, and the
-        * target of the branch if it is taken.
-        * @param inst The branch instruction.
-        * @param PC The predicted PC is passed back through this parameter.
-        * @param tid The thread id.
-        * @return Returns if the branch is taken or not.
-        */
-    bool isBranch(const StaticInstPtr &inst, const InstSeqNum &seqNum,
-                    PCStateBase &pc, ThreadID tid);
+
+    // handles the PCstatebase nonsense, otherwise passthru to m_query_PC
+    //Note: if not taken, will advance pc
+    PBTBResultType queryFromFetch(
+            const StaticInstPtr inst, PCStateBase &pc,
+            int *p_breg_out, uint64_t *p_version_out);
+
+    //Note: if not taken, will instead
+    //advance pcAddr and return in targetAddr_out
+    PBTBResultType queryFromDecode(
+            const StaticInstPtr inst, Addr pcAddr,
+            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
+
+    // === Squash behavior:
+    // resetToFinalizedMap() // for when we squash from decode
+    // resetToCommittedMap? // for when we are able to handle exceptions
+    //print out
+    void debugDump();
+    // Limits which regs to print (to limit output). Inclusive/exclusive
+    void debugDump(int regstart, int regstop);
+
+
 
 }; // class PrecomputedBTB
 

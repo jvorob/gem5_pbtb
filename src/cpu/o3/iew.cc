@@ -1260,7 +1260,9 @@ IEW::executeInsts()
                         "Bmov detected.\n",
                     tid, inst->seqNum);
 
-                squashDueToBranch(inst, tid);
+                //TODO Originally this was to get bmovs working, but now
+                //we want to only squash in decode due to finalize
+                //squashDueToBranch(inst, tid);
 
                 //TODO JV: agh idk what this does
                 //ppMispredict->notify(inst);

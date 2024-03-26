@@ -303,7 +303,8 @@ class Decode
     bool isPBReadyToFinalize(DynInstPtr inst) const;
 
     //state:
-    InstSeqNum lastDecodedInst;
+    InstSeqNum lastDecodedInst; //TODO: remove this once bmov is debugged
+    InstSeqNum lastDecodedBmov;
     InstSeqNum lastDoneFromCommit;
     // InstSeqNum lastSquashFromCommit; // I dont think im using/need this one?
     // ======= END JV PBTB ADDITIONS

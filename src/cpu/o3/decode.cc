@@ -115,6 +115,7 @@ Decode::resetStage()
 
     // TODO JV: Is this necessary? is this the right place for it?
     lastDecodedInst      = 0;
+    lastDecodedBmov      = 0;
     lastDoneFromCommit   = 0;
     //lastSquashFromCommit = 0;
 }
@@ -267,9 +268,11 @@ Decode::fetchInstsValid()
 
 bool Decode::isPBReadyToFinalize(DynInstPtr inst) const {
     DPRINTF(Decode,"[tid:X] isPBReadyToFinalize lastDecoded=%d, "
-            "lastCommitted=%d\n", lastDecodedInst, lastDoneFromCommit);
+            "lastBmov=%d, lastCommitted=%d\n",
+            lastDecodedInst, lastDecodedBmov, lastDoneFromCommit);
 
-    if (lastDoneFromCommit >= lastDecodedInst) {
+    //if (lastDoneFromCommit >= lastDecodedInst) {
+    if (lastDoneFromCommit >= lastDecodedBmov) {
         return true;
     }
 
@@ -330,7 +333,9 @@ void
 Decode::squash(const DynInstPtr &inst, ThreadID tid)
 {
     DPRINTF(Decode, "[tid:%i] [sn:%llu] Squashing due to incorrect branch "
-            "prediction detected at decode.\n", tid, inst->seqNum);
+            "prediction detected at decode (correct target: 0x%x).\n",
+            tid, inst->seqNum,
+            inst->readPredTarg().instAddr());
 
     // Send back mispredict information.
     toFetch->decodeInfo[tid].branchMispredict = true;
@@ -338,7 +343,12 @@ Decode::squash(const DynInstPtr &inst, ThreadID tid)
     toFetch->decodeInfo[tid].mispredictInst = inst;
     toFetch->decodeInfo[tid].squash = true;
     toFetch->decodeInfo[tid].doneSeqNum = inst->seqNum;
-    set(toFetch->decodeInfo[tid].nextPC, *inst->branchTarget());
+
+    // TODO JV PBTB: originally this used the branchTarget from the branch
+    // However, now the pbs dont actually have a target
+    // Instead, we update the inst->predTarg
+    set(toFetch->decodeInfo[tid].nextPC, inst->readPredTarg());
+    //OLD: set(toFetch->decodeInfo[tid].nextPC, *inst->branchTarget());
 
     // Looking at inst->pcState().branching()
     // may yield unexpected results if the branch
@@ -380,6 +390,10 @@ Decode::squash(const DynInstPtr &inst, ThreadID tid)
         skidBuffer[tid].pop_front();
     }
 
+
+    // PBTB: Reset the fetch stage's PBTB to the finalize one
+    cpu->PBTB.squashFinalizeToFetch();
+
     // Squash instructions up until this one
     cpu->removeInstsUntil(squash_seq_num, tid);
 }
@@ -388,6 +402,7 @@ unsigned
 Decode::squash(ThreadID tid)
 {
     DPRINTF(Decode, "[tid:%i] Squashing.\n",tid);
+    // (squash from commit and/or other stages)
 
     if (decodeStatus[tid] == Blocked ||
         decodeStatus[tid] == Unblocking) {
@@ -427,6 +442,9 @@ Decode::squash(ThreadID tid)
     while (!skidBuffer[tid].empty()) {
         skidBuffer[tid].pop_front();
     }
+
+    // PBTB: Reset the fetch stage's PBTB to the finalize one
+    cpu->PBTB.squashFinalizeToFetch();
 
     return squash_count;
 }
@@ -560,8 +578,8 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
         !fromCommit->commitInfo[tid].squash) {
 
         InstSeqNum newNum = fromCommit->commitInfo[tid].doneSeqNum;
-        DPRINTF(Decode, "[tid:%i] BMOV Tracking: new done inst:%d"
-                "from commit.\n", tid, newNum);
+        DPRINTF(Decode, "[tid:%i] BMOV Tracking: new done inst"
+                " from commit: [sn%d]\n", tid, newNum);
         assert(newNum >= lastDoneFromCommit);
         lastDoneFromCommit = newNum;
     }
@@ -581,18 +599,29 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
                 "squash@%d, lastCommited=%d."
                 " Moving lastDecoded up to squash\n",
                 tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
+
         // We've squashed some in-flight instructions, so we no longer
         // need to wait for lastDecodedInst, just the last non-squashed inst
         assert(squashSeqNum >= lastDoneFromCommit); // sanity check?
+
         if (lastDecodedInst > squashSeqNum) {
             DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
                     "squash@%d, lastCommited=%d."
                     " Moving lastDecoded up to squash\n",
-                    tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
+                    tid, lastDecodedInst,
+                    squashSeqNum, lastDoneFromCommit);
             lastDecodedInst = squashSeqNum;
             //TODO: once we track specifically the last bmov, it'll be
             // a little trickier to do
 
+        }
+        if (lastDecodedBmov > squashSeqNum) {
+            DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastBmov=%d, "
+                    "squash@%d, lastCommited=%d."
+                    " Moving lastBmov up to squash\n",
+                    tid, lastDecodedBmov,
+                    squashSeqNum, lastDoneFromCommit);
+            lastDecodedBmov = squashSeqNum;
         }
         //(fromCommit->commitInfo[tid].doneSeqNum, tid);
         //lastSquashFromCommit = newSquashNum;
@@ -764,12 +793,14 @@ Decode::decodeInsts(ThreadID tid)
 
         // TODO JV: change this to isPB
         // TODO JV: pb AND not squashed (checked above)
-        // TODO: should this be isControl? what are the differences?
-        if (inst->isDirectCtrl() && !isPBReadyToFinalize(inst))
+        // If it's a pb or it was predicted as a pb, need to
+        // make sure we're ready to finalize it
+        if ((inst->readPredBTBReg() >= 0 || inst->isControl())
+                && !isPBReadyToFinalize(inst))
         {
             DPRINTF(Decode,"[tid:%i] Stalling for pb finalize\n", tid);
-            DPRINTF(Decode, "JV PBTB: Blocking branch in finalize"
-                            " (in decode)!\n");
+            //DPRINTF(Decode, "JV PBTB: Blocking branch in finalize"
+            //                " (in decode)!\n");
 
             insts_to_decode.push_front(inst);
             // push_back has to happen first so block()
@@ -797,6 +828,10 @@ Decode::decodeInsts(ThreadID tid)
         // Note: we know it's not squashed at this point)
         assert(inst->seqNum > lastDecodedInst);
         lastDecodedInst = inst->seqNum;
+        if (inst->isBmov()) {
+            assert(inst->seqNum > lastDecodedBmov);
+            lastDecodedBmov = inst->seqNum;
+        }
 
         ++(toRename->size);
         ++toRenameIndex;
@@ -808,6 +843,149 @@ Decode::decodeInsts(ThreadID tid)
             inst->decodeTick = curTick() - inst->fetchTick;
         }
 #endif
+
+        // ===== PBTB: requery the finalize pbtb
+
+        PrecomputedBTB::PBTBResultType res;
+        int      d_breg  = -1;
+        uint64_t d_version = 0;
+        bool     d_exhausted;
+        bool     d_taken;
+        Addr     d_targAddr = 0; //TODO
+        //TODO: do this properly
+        res = cpu->PBTB.queryFromDecode(inst->staticInst,
+                                        inst->pcState().instAddr(),
+                                        &d_breg, &d_version, &d_targAddr);
+        d_exhausted = (res == PrecomputedBTB::PR_Exhaust);
+        d_taken = (res == PrecomputedBTB::PR_Taken);
+
+        // ===== Also pull up the original predictions from fetch to compare
+        int      f_breg      = inst->readPredBTBReg();
+        uint64_t f_version   = inst->readPredBTBVersion();
+        bool     f_exhausted = inst->readPredBTBExhausted();
+        bool     f_taken     = inst->readPredTaken();
+        Addr     f_targAddr  = inst->readPredTarg().instAddr();
+
+        //We now have all our variables
+
+        if (d_exhausted) { // Incorrect code: missed a bmov somewhere
+            panic("PBTB exhausted in finalize (in decode)\n");
+            //TODO: this should eventually throw a BMOV exception
+        }
+
+        // PBTB sees a branch where it shouldn't be, or sees no branch
+        // where there should be one (Incorrect code)
+        if ((inst->isControl()  && d_breg<0) ||
+           (!inst->isControl() && d_breg >= 0)) {
+            DPRINTF(Decode, "ERROR: inst->isControl:%c, d_breg=%d\n",
+                    inst->isControl()?'T':'F', d_breg);
+
+            panic("PBTB doesn't match placeholder"
+                  " branch in finalize (in decode)\n");
+            //TODO: change this to check pb and verify matching breg
+            //TODO: this should eventually throw a BMOV exception
+        }
+
+
+        bool mispred = false;
+        char mispredReason[256] = "";
+
+        // Fetch predicted a branch, but there's no branch here now
+        if (d_breg < 0 && f_breg >= 0) {
+            mispred = true;
+            snprintf(mispredReason, sizeof(mispredReason),
+                "fetch predicted a branch where there was none: f@b%d-vi%ld",
+                f_breg, f_version);
+        } else if (d_breg >= 0) {
+            // There is a branch here:
+
+            if (f_breg != d_breg) {
+                mispred = true;
+                snprintf(mispredReason, sizeof(mispredReason),
+                        "fetch had wrong breg: f@b%d, d@b%d",
+                        f_breg, d_breg);
+            } else if (f_exhausted) {
+                mispred = true;
+                snprintf(mispredReason, sizeof(mispredReason),
+                        "fetch read from exhausted breg: f@b%d-EXH",
+                        f_breg);
+            } else if (f_version != d_version) {
+                mispred = true;
+                snprintf(mispredReason, sizeof(mispredReason),
+                        "version mismatch: f@b%d-v%ld, d@b%d-v%ld",
+                        f_breg, f_version, d_breg, d_version);
+            }
+
+            DPRINTF(Decode, "JV PBTB: Finalized a branch (%s)"
+                            " at pc0x%x->0x%x [sn:%d], b%dv%d\n",
+                    d_taken ? "T":"NT",
+                    inst->pcState().instAddr(), d_targAddr,
+                    inst->seqNum,
+                    d_breg, d_version);
+            //TODO TEMP DEBUG
+            // DPRINTF(Decode, "JV PBTB: FINALIZING: DEBUG INFO: @pc0x%x\n"
+            //             "------------------d: b%dv%ld: %s%s, ->0x%x\n"
+            //             "------------------f: b%dv%ld: %s%s, ->0x%x\n",
+            //         inst->pcState().instAddr(),
+            //         d_breg, d_version,
+            //         d_exhausted ? "EXH ":"", d_taken?"T":"NT",
+            //         d_targAddr,
+            //         f_breg, f_version,
+            //         f_exhausted ? "EXH ":"", f_taken?"T":"NT",
+            //         f_targAddr);
+
+            if (!mispred) {
+                // At this point, finalize sees a branch, and fetch
+                // seems to have matched it
+                // Make sure that the actual outcome agrees
+                //DPRINTF(Decode,
+                //        "JV PBTB: Finalized a branch at pc0x%x->0x%x\n",
+                //        inst->pcState().instAddr(), d_targAddr);
+                assert(d_taken == f_taken);
+                assert(!d_taken || (d_targAddr == f_targAddr));
+                //TODO: should this be only if taken?
+                //     ++stats.branchResolved;
+            } else {
+                //++stats.branchMispred;
+
+                //// Might want to set some sort of boolean and just do
+                //// a check at the end
+                //squash(inst, inst->threadNumber);
+
+                //DPRINTF(Decode,
+                //        "[tid:%i] [sn:%llu] "
+                //        "Updating predictions: Wrong predicted target: %s \
+                //        PredPC: %s\n",
+                //        tid, inst->seqNum, inst->readPredTarg(), *target);
+                ////The micro pc after an instruction level branch should be 0
+                //inst->setPredTarg(*target);
+                //break;
+            }
+
+        }
+
+        if (mispred) {
+            DPRINTF(Decode,
+                    "[tid:%i] [sn:%llu] "
+                    "JV: PBTB decode caught mispredict: %s"
+                    ". misp target:0x%x."
+                    " corr target:0x%x\n",
+                    tid, inst->seqNum, mispredReason,
+                    f_targAddr, d_targAddr);
+            ++stats.controlMispred;
+
+
+            //Update to correct target
+            auto tempAddr = GenericISA::SimplePCState<4>();
+            tempAddr.set(d_targAddr);
+            inst->setPredTarg(tempAddr);
+
+            // squash overwrites pbtb to correct state (from finalize)
+            squash(inst, inst->threadNumber);
+
+            break;
+        }
+
 
         // TODO JV TEMP: DON'T CHECK BRANCHES, LET PBTB DRIVE IT
         // // Ensure that if it was predicted as a branch, it really is a
@@ -824,14 +1002,16 @@ Decode::decodeInsts(ThreadID tid)
         //     break;
         // }
 
-        if (inst->readPredTaken()) {
-            DPRINTF(Decode,
-                    "[tid:%i] [sn:%llu] "
-                    "JV: PBTB predicted a branch to: %s\n",
-                    //(op target: %s\n)",
-                    tid, inst->seqNum, inst->readPredTarg());
-                    //, *(inst->branchTarget()));
-        }
+        // // OLD JV DEBUG INFO
+        // if (inst->readPredTaken()) {
+        //     DPRINTF(Decode,
+        //             "[tid:%i] [sn:%llu] "
+        //             "JV: PBTB predicted a branch to: %s\n",
+        //             //(op target: %s\n)",
+        //             tid, inst->seqNum, inst->readPredTarg());
+        //             //, *(inst->branchTarget()));
+        // }
+
         //TODO JV TEMP: Don't check branches! Default to predicted target??
         // // Go ahead and compute any PC-relative branches.
         // // This includes direct unconditional control and

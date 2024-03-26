@@ -1483,8 +1483,8 @@ const char* PrecomputedBTB::BranchTypeStrs[] = { "NoBranch", "Taken", "Loop",
 
 void PrecomputedBTB::debugDump(int regstart, int regstop) {
     //TODO: make these DPRINTF? (need to define my own debug flag somewhere)
-    printf("PBTB (%d CPs, fst=%d, lst=%d): {\n",
-            numActiveCheckpoints(), first_checkp, last_checkp);
+    //printf("PBTB (%d CPs, fst=%d, lst=%d): {\n",
+    //        numActiveCheckpoints(), first_checkp, last_checkp);
 
     regstart = std::max(0, regstart);
     regstop = std::min(NUM_REGS, regstop);
@@ -1493,7 +1493,8 @@ void PrecomputedBTB::debugDump(int regstart, int regstop) {
     // If skipping some regs at the start, show that
     if (numtoprint > 0 && regstart > 0) { printf("  ...\n"); }
 
-    struct pbtb_map *curr_map = &maps[last_checkp];
+    struct pbtb_map *mapsToPrint[] = {&map_fetch, &map_final};
+    struct pbtb_map *curr_map = mapsToPrint[0];
     for (int reg = regstart; reg < regstop; reg++) {
         auto branchCode = BranchTypeCodes[curr_map->cond_type[reg]];
 
@@ -1517,13 +1518,19 @@ void PrecomputedBTB::debugDump(int regstart, int regstop) {
 void PrecomputedBTB::debugDump() { debugDump(0, NUM_REGS); }
 
 
-void PrecomputedBTB::setSource(int breg, Addr source_addr) {
+// =============== Per-Map functions (PRIVATE)
+
+void PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
+                                 int breg, Addr source_addr) {
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
-    maps[last_checkp].source[breg] = source_addr;
+    pmap->source[breg] = source_addr;
+    pmap->version[breg]++; //TODO: set this to seqNum instead
 }
-void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
+void PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
+                                 int breg, Addr target_addr) {
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
-    maps[last_checkp].target[breg] = target_addr;
+    pmap->target[breg] = target_addr;
+    pmap->version[breg]++; //TODO: set this to seqNum instead
 }
 
 // Sets the condition for a given branch
@@ -1534,7 +1541,7 @@ void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
 // - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
 //     many bits of regval loop to form the pattern
 //
-void PrecomputedBTB::setCondition(const InstSeqNum &seqNum,
+void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
                                   int breg,
                                   BranchType conditionType,
                                   uint64_t val) {
@@ -1542,7 +1549,7 @@ void PrecomputedBTB::setCondition(const InstSeqNum &seqNum,
     // branches (whether real or false positives)
     // However, we can't make that work until we have branches stall in decode
     // when bmovs are in flight
-    squashYoungerCheckpoints(seqNum);
+    //squashYoungerCheckpoints(seqNum);
 
     // need to squash all ops older than seqnum (or == seqnum, if the bmov
     // itself was mispredicted as a branch)
@@ -1553,32 +1560,53 @@ void PrecomputedBTB::setCondition(const InstSeqNum &seqNum,
     switch (conditionType) {
         case NoBranch:
         case Taken:
-            maps[last_checkp].cond_type[breg]    = conditionType;
-            maps[last_checkp].cond_val[breg]     = 0;
-            maps[last_checkp].cond_aux_val[breg] = 0;
+            pmap->cond_type[breg]    = conditionType;
+            pmap->cond_val[breg]     = 0;
+            pmap->cond_aux_val[breg] = 0;
+            pmap->version[breg]++; //TODO: set this to seqNum instead
             break;
         case LoopN:
-            maps[last_checkp].cond_type[breg]    = conditionType;
-            maps[last_checkp].cond_val[breg]     = val;
-            maps[last_checkp].cond_aux_val[breg] = 0;
+            pmap->cond_type[breg]    = conditionType;
+            pmap->cond_val[breg]     = val;
+            pmap->cond_aux_val[breg] = 0;
+            pmap->version[breg]++; //TODO: set this to seqNum instead
             break;
         case ShiftBit:
-            maps[last_checkp].cond_type[breg]    = ShiftBit;
+            if (pmap->cond_type[breg] != ShiftBit) {
+                // When first switching to BIT mode,
+                // reset the bit fifo
+                pmap->cond_val[breg]     = 0;
+                pmap->cond_aux_val[breg] = 0;
+
+                // Also, version should only increment on first
+                // change (so we can produce and consume simultaneously
+                //         as long as enough bits are in the queue)
+                pmap->version[breg]++; //TODO: set this to seqNum instead
+            }
+            pmap->cond_type[breg]    = ShiftBit;
 
             //if (conditionType == ShiftBit_Clear) { //clear fifo
-            //    maps[last_checkp].cond_val[breg]     = 0; // bits
-            //    maps[last_checkp].cond_aux_val[breg] = 0; // num_bits
+            //    pmap->cond_val[breg]     = 0; // bits
+            //    pmap->cond_aux_val[breg] = 0; // num_bits
             //}
 
             // Bits shifted out at LSB, shifted in at bit N,
             // where N is current size of array
             // e.g. if curr_size == e.g. 3 bits, next bit comes in at bit 3
-            maps[last_checkp].cond_val[breg] |= (val?1:0) <<
-                                maps[last_checkp].cond_aux_val[breg];
-            maps[last_checkp].cond_aux_val[breg] += 1; // num_bits++
+            pmap->cond_val[breg] |= (val?1:0) <<
+                                pmap->cond_aux_val[breg];
+            pmap->cond_aux_val[breg] += 1; // num_bits++
+
+            {
+            uint64_t bits = pmap->cond_val[breg];
+            uint64_t numbits = pmap->cond_aux_val[breg];
+            DPRINTF(Exec, "PBTB (X): bmovc_bit b%d: data{%s}(%d)\n",
+                    breg, debugPrintBottomBits(bits,numbits), numbits);
+
+            }
 
             // make sure we don't touch the sign bit (just to be safe)
-            assert(maps[last_checkp].cond_aux_val[breg] <= 63);
+            assert(pmap->cond_aux_val[breg] <= 63);
             //TODO: handle overflow propely?
             break;
         case ShiftBit_Clear:
@@ -1588,135 +1616,217 @@ void PrecomputedBTB::setCondition(const InstSeqNum &seqNum,
     }
 }
 
-
-// FUTURE THOUGHTS FOR SPECULATIVE EXECUTION:
-// - Fetch stage will ask us to predict a branch, and we
-// need to decrement/shift when we do so.
-//   - Do we checkpoint everytime a branch is requested until it's committed?
-//   - Do we decrement/undo if that branch op is squashed?
-//   - How do we handle speculative bmovs?
-//
-
-/** (JV: Copied from BPredUnit::predict(...))
-    * Returns whether or not the inst is a taken branch, and the
-    * target of the branch if it is taken.
-    * @param inst The branch instruction.
-    * @param PC The predicted PC is passed back through this parameter.
-    * @param tid The thread id.
-    * @return Returns if the branch is taken or not.
+/**
+    * Queries the given pmap for pcAddr,
+    * returns the appropriate resultType
+    * if a matching breg IS found, sets p_breg_out and p_version_out
+    * if a taken branch is found, sets p_targetAddr_out
+    * @param pcAddr The pc of branches to look for (source PC)
+    * @param p_breg_out If a breg match is found, will be returned here
+    * @param p_version_out If a breg match is found, version will be here
+    * @param p_targetAddr_out If match is a taken branch, tgt addr will be here
+    * @return Returns PBTBResultType depending on the kind of match
     */
-bool PrecomputedBTB::isBranch(const StaticInstPtr &inst,
-                              const InstSeqNum &seqNum,
-                              PCStateBase &pc,
-                              ThreadID tid) {
+PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
+            struct pbtb_map *pmap, Addr pcAddr,
+            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
 
-    // TODO verify that inst breg matches lookup-ed breg
-    // TODO: make loop/shift stall if no data
-
-    //auto target = std::make_unique<GenericISA::SimplePCState<4>>();
-    // TODO: everywhere else uses a unique_ptr<PCState>, is there a reason for
-    // that? or is a bare object fine?
-    auto target = GenericISA::SimplePCState<4>();
-    target.set(pc.instAddr());
+    // Queries pbtbp for pcAddr
+    // if no match, returns PR_NoMatch
+    // if match found:
+    //     sets p_breg_out, p_version_out
+    //     if taken:
+    //        returns PR_Taken, sets p_targetAddr_out
+    //     else:
+    //        returns PR_NotTaken or PR_Exhausted
 
     int breg = -1; // If found, match will go here
-    BranchType type = NoBranch; // If match found, type will go here
+    BranchType brType = NoBranch; // If match found, type will go here
+    // Note: bregs in the map can be set to NoBranch, but we should never
+    //       match against those (i.e. they're invalid, so this works fine)
+    PBTBResultType resType;
 
-
+    const char *debugWhichMap = "?";
+    if (pmap == &map_fetch) { debugWhichMap = "F"; }
+    if (pmap == &map_final) { debugWhichMap = "D"; }
 
     // ==== Loop to find first breg matching the source addr
     for (int i = 0; i < NUM_REGS; i++) {
-        if (maps[last_checkp].source[i] == pc.instAddr()) {
+        if (pmap->source[i] == pcAddr) {
             //Found a match!
             breg = i;
-            type = maps[last_checkp].cond_type[i];
+            brType = pmap->cond_type[i];
             break;
         }
+    }
+
+    // NOTE: NoBranch shouldn't be reported as a match
+    if (brType == NoBranch) {
+        *p_breg_out = -1;
+        return PR_NoMatch;
     }
 
     // ==== Check based on branch type whether or not it's taken
     // NOTE: breg might be -1, only guaranteed for breg to be valid
     //       if type != NoBranch
-    bool pred_taken;
+    if (brType == Taken) {
+        resType = PR_Taken;
 
-    struct pbtb_map *curr_map = &maps[last_checkp];
+        DPRINTF(Decode, "PBTB (%s): HIT b%d: TKN 0x%x -> 0x%x\n",
+                debugWhichMap, breg, pcAddr, pmap->target[breg]);
 
-    if (type == NoBranch) {
-        pred_taken = false;
-    } else if (type == Taken) {
-        pred_taken = true;
+    } else if (brType == LoopN) {
+        DPRINTF(Decode, "PBTB (%s): HIT b%d: LOOP{%d} (%s) 0x%x -?> 0x%x\n",
+                debugWhichMap, breg, pmap->cond_val[breg],
+                pmap->cond_val[breg]>0 ? "T" : "NT",
+                pcAddr, pmap->target[breg]);
 
-        DPRINTF(Fetch, "PBTB (F): HIT b%d: TKN 0x%x -> 0x%x\n",
-                breg, 0xffff, 0xffff);
+        //CONSUMED A LOOP ITERATION (debug output?)
 
-    } else if (type == LoopN) {
-        DPRINTF(Fetch, "PBTB (F): HIT b%d: LOOP{%d} 0x%x -> 0x%x\n",
-                breg, curr_map->cond_val[breg], 0xffff, 0xffff);
-
-        makeNewCheckpoint(seqNum);
-        curr_map = &maps[last_checkp];
-
-        DPRINTF(Fetch, "PBTB (F): \\-> New checkp #%d\n", last_checkp);
-
-        if (curr_map->cond_val[breg] > 0) {
-            pred_taken = true;
-            curr_map->cond_val[breg]--;
-        } else if (curr_map->cond_val[breg] == 0) {
-            pred_taken = false;
-            curr_map->cond_val[breg] = -1;
+        if (pmap->cond_val[breg] > 0) {
+            resType = PR_Taken;
+            pmap->cond_val[breg]--;
+        } else if (pmap->cond_val[breg] == 0) {
+            resType = PR_NotTaken;
+            pmap->cond_val[breg] = -1;
         } else {
-            // LOOP EXHAUSTED: STALL
-            pred_taken = false;
-            DPRINTF(Fetch, "PBTB (F): Loop at -1: ERROR\n");
-            printf("PBTB: Loop at -1: ERROR\n");
-            //TODO: make this stall? for now it'll just get squashed
+            // LOOP EXHAUSTED: Will be handled in decode validate/finalize
+            resType = PR_Exhaust;
+            DPRINTF(Decode, "PBTB (F): Loop at -1: Exhausted\n");
+            //printf("PBTB: Loop at -1: ERROR\n");
         }
 
-    } else if (type == ShiftBit) {
-        uint64_t bits = curr_map->cond_val[breg];
-        uint64_t numbits = curr_map->cond_aux_val[breg];
-        DPRINTF(Fetch, "PBTB (F): HIT b%d: BIT{%s} (%s) 0x%x -> 0x%x\n",
-                breg, debugPrintBottomBits(bits,numbits),
-                (bits&1) ? "T" : "NT", 0xffff, 0xffff);
+    } else if (brType == ShiftBit) {
+        uint64_t bits = pmap->cond_val[breg];
+        uint64_t numbits = pmap->cond_aux_val[breg];
+        DPRINTF(Decode, "PBTB (%s): HIT b%d: BIT{%s} (%s) 0x%x -?> 0x%x\n",
+                debugWhichMap, breg, debugPrintBottomBits(bits,numbits),
+                (numbits>0 && bits&1) ? "T" : "NT",
+                pcAddr, pmap->target[breg]);
 
-        makeNewCheckpoint(seqNum);
-        curr_map = &maps[last_checkp];
-
-        DPRINTF(Fetch, "PBTB (F): \\-> New checkp #%d\n", last_checkp);
+        //CONSUMED A BIT
+        //DPRINTF(Decode, "PBTB (F): \\-> Consumed a bit\n");
 
         // cond_val holds bits, cond_aux_val is number of bits valid
-        if (curr_map->cond_aux_val[breg] > 0) { //if num_bits > 0
-            pred_taken = curr_map->cond_val[breg] & 0x1;
-            curr_map->cond_val[breg] >>= 1; // shift out bottom bit
-            curr_map->cond_aux_val[breg]--; // bits-- (don't underflow!)
-        } else { // no bits, default to false
-            //TODO: warn about this somehow? ISA-wise this feels
-            // like a compiler error or a mis-speculation issue
-            pred_taken = false;
-            printf("PBTB: ShiftBit out of bits: ERROR\n");
-            DPRINTF(Fetch, "PBTB (F): ShiftBit out of bits: ERROR\n");
-            //TODO: make this stall? for now it'll just get squashed
+        if (pmap->cond_aux_val[breg] > 0) { //if num_bits > 0
+            int bit = pmap->cond_val[breg] & 0x1;
+            resType = bit ? PR_Taken : PR_NotTaken;
+            pmap->cond_val[breg] >>= 1; // shift out bottom bit
+            pmap->cond_aux_val[breg]--; // bits-- (don't underflow!)
+        } else { // no bits, exhause (will be handled in decode:finalize)
+            resType = PR_Exhaust;
+            //printf("PBTB: ShiftBit out of bits: Exhausted\n");
+            DPRINTF(Decode, "PBTB (%s): ShiftBit out of bits: Exhausted\n",
+                            debugWhichMap);
         }
     } else {
         assert(false); // Unrecognized pbtb entry type, crash out
-        return false;
+        return PR_NoMatch;
     }
 
     // ==== Prediction made: return to caller
     // Return next-fetched PC through pc arg
-    if (pred_taken){
-        assert(breg >= 0); // breg guaranteed to be valid
-        target.set(curr_map->target[breg]);
-        set(pc, target);
-        return true; //  taken
 
+    assert(breg >= 0); // breg guaranteed to be valid,
+                       // otherwise we'd have returned earlier
+                       //
+    *p_breg_out = breg;
+    *p_version_out = pmap->version[breg];
+    if (resType == PR_Taken) { *p_targetAddr_out = pmap->target[breg]; }
+    return resType;
+}
+
+// =============== PUBLIC Modification functions
+// (these use the per-map functions but touch multiple maps)
+
+
+void PrecomputedBTB::setSource(int breg, Addr source_addr) {
+    m_setSource(&map_fetch, breg, source_addr);
+    m_setSource(&map_final, breg, source_addr);
+}
+void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
+    m_setTarget(&map_fetch, breg, target_addr);
+    m_setTarget(&map_final, breg, target_addr);
+}
+void PrecomputedBTB::setCondition(InstSeqNum seqNum,
+                    int breg, BranchType conditionType, uint64_t val) {
+    m_setCondition(&map_fetch, breg, conditionType, val);
+    m_setCondition(&map_final, breg, conditionType, val);
+}
+
+
+void PrecomputedBTB::squashFinalizeToFetch() {
+    DPRINTF(Decode, "PBTB: Overwriting PBTB from finalize\n");
+    //TODO: assert that they're equal barring loop counts / bit counts
+    map_fetch = map_final;
+}
+
+
+/**
+    * Performs a prediction for the given pc
+    * Sets pc to target if taken, else inst->advancePC(pc), to better match
+    * interface from branchpredictor
+    * @param inst The branch instruction (used for advancePC)
+    * @param pc The predicted PC is passed back through this parameter.
+    * @param p_breg_out breg is passed back here, or -1 if no match
+    * @param p_version_out version for breg is passed back here
+    * @return Returns PBTBResultType for T, NT, Exhausted, and NoMatch
+    */
+PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
+            const StaticInstPtr inst, PCStateBase &pc,
+            int *p_breg_out, uint64_t *p_version_out) {
+
+    Addr tgt = pc.instAddr(); //will be overwritten if taken
+                              //
+    PBTBResultType res = m_queryPC(&map_fetch, pc.instAddr(),
+            p_breg_out, p_version_out, &tgt);
+
+    // TODO: I'm not sure how to deal with PCStateBases: this tempAddr
+    // thing seems to work, so I'm sticking with it
+    auto tempAddr = GenericISA::SimplePCState<4>();
+    // TODO: everywhere else uses a unique_ptr<PCState>, is there a reason for
+    // that? or is a bare object fine?
+    // Old code: auto target=std::make_unique<GenericISA::SimplePCState<4>>();
+
+    // ==== Prediction made: return to caller
+    // Return next-fetched PC through pc arg
+    if (res == PR_Taken){
+        tempAddr.set(tgt);
+        set(pc, tempAddr);
     } else { //Else: no match, OR match found but not taken
-        inst->advancePC(target);
-        set(pc, target);
-        return false; // Not-taken
+        inst->advancePC(pc);
     }
 
+    return res;
 }
+
+
+//Passthrough, queries the finalize/decode version of the map
+//NOTE: if not taken, will use inst to instead advance targetAddr_out
+//to nextPc
+PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
+            const StaticInstPtr inst,  Addr pcAddr,
+            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
+
+    PBTBResultType res = m_queryPC(&map_final, pcAddr,
+            p_breg_out, p_version_out, p_targetAddr_out);
+
+    if (res != PR_Taken) {
+        // TODO: This is a horrible pile of hacks but I don't want to switch
+        // everything to use PCStates
+        auto tempAddr = GenericISA::SimplePCState<4>();
+        tempAddr.set(pcAddr);
+        inst->advancePC(tempAddr);
+        *p_targetAddr_out = tempAddr.instAddr();
+    }
+
+    return res;
+}
+
+//????
+//bool PrecomputedBTB::finalizePB() {
+//}
+
 
 // ==============================================================
 

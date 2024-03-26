@@ -490,42 +490,71 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     // this function updates it.
     bool predict_taken;
 
-    if (!inst->isControl()) {
-        inst->staticInst->advancePC(next_pc);
-        inst->setPredTarg(next_pc);
-        inst->setPredTaken(false);
-        return false;
-    }
+    //JV PBTB: everything needs to go through pbtb
+    //if (!inst->isControl()) {
+    //    inst->staticInst->advancePC(next_pc);
+    //    inst->setPredTarg(next_pc);
+    //    inst->setPredTaken(false);
+    //    return false;
+    //}
 
     ThreadID tid = inst->threadNumber;
+
+    // ==== RUN THE PREDICTION
     //predict_taken = branchPred->predict(inst->staticInst, inst->seqNum,
     //                                    next_pc, tid
-    predict_taken = cpu->PBTB.isBranch(inst->staticInst, inst->seqNum,
-                                       next_pc, tid);
+    //predict_taken = cpu->PBTB.isBranch(inst->staticInst, inst->seqNum,
+    //                                   next_pc, tid);
 
-    if (predict_taken) {
-        DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch at PC %#x "
-                "predicted to be taken to %s\n",
-                tid, inst->seqNum, inst->pcState().instAddr(), next_pc);
+    PrecomputedBTB::PBTBResultType res;
+    int breg = -1;
+    uint64_t version = 0;
+
+    res = cpu->PBTB.queryFromFetch(inst->staticInst, next_pc, &breg, &version);
+
+    // Apply pred flags to see if we mispredicted later
+    inst->setPredBTBReg(breg);
+    inst->setPredBTBVersion(version);
+    inst->setPredBTBExhausted(res == PrecomputedBTB::PR_Exhaust);
+
+    predict_taken = (res == PrecomputedBTB::PR_Taken);
+
+    //Result will be one of PR_Taken,PR_NotTaken,PR_Exhaust,PR_NoMatch
+    if (res == PrecomputedBTB::PR_NoMatch) {
+        //???
     } else {
-        DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch at PC %#x "
-                "predicted to be not taken\n",
-                tid, inst->seqNum, inst->pcState().instAddr());
+        // If !=NoMatch, breg should be valid
+        assert(breg >= 0); // breg guaranteed to be valid
+                           //
+        //TODO: BETTER DEBUG LOGGING?
+
+        if (predict_taken) {
+            DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch (b%d-v%d) at PC %#x "
+                    "predicted to be taken to %s\n",
+                    tid, inst->seqNum,
+                    breg, version,
+                    inst->pcState().instAddr(), next_pc);
+        } else {
+            const char *exh_str = inst->readPredBTBExhausted() ? "-EXH" : "";
+            DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch (b%d-v%d%s) at PC %#x "
+                    "predicted to be not taken\n",
+                    tid, inst->seqNum,
+                    breg, version, exh_str,
+                    inst->pcState().instAddr());
+        }
+
+        cpu->fetchStats[tid]->numBranches++;
     }
 
-    DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch at PC %#x "
-            "predicted to go to %s\n",
-            tid, inst->seqNum, inst->pcState().instAddr(), next_pc);
     inst->setPredTarg(next_pc);
     inst->setPredTaken(predict_taken);
-
-    cpu->fetchStats[tid]->numBranches++;
 
     if (predict_taken) {
         ++fetchStats.predictedBranches;
     }
 
     return predict_taken;
+
 }
 
 bool
@@ -711,8 +740,6 @@ Fetch::doSquash(const PCStateBase &new_pc, const InstSeqNum seq_num,
         memReq[tid] = NULL;
     }
 
-    cpu->PBTB.squashYoungerCheckpoints(seq_num);
-
     // Get rid of the retrying packet if it was from this thread.
     if (retryTid == tid) {
         assert(cacheBlocked);
@@ -759,11 +786,6 @@ Fetch::checkStall(ThreadID tid) const
     if (stalls[tid].drain) {
         assert(cpu->isDraining());
         DPRINTF(Fetch,"[tid:%i] Drain stall detected.\n",tid);
-        ret_val = true;
-    }
-
-    if (cpu->PBTB.outOfCheckpoints()) {
-        DPRINTF(Fetch,"[tid:%i] PBTB Out of Checkpoints, stalling.\n",tid);
         ret_val = true;
     }
 
@@ -1301,14 +1323,6 @@ Fetch::fetch(bool &status_change)
                 blkOffset = (fetchAddr - fetchBufferPC[tid]) / instSize;
                 pcOffset = 0;
                 curMacroop = NULL;
-            }
-
-            if (cpu->PBTB.outOfCheckpoints()) {
-                DPRINTF(Fetch,
-                        "PBTB ran out of checkpoints, halting fetch!\n");
-                fetchStatus[tid] = Blocked;
-                status_change = true;
-                break;
             }
 
             if (instruction->isQuiesce()) {

@@ -323,6 +323,12 @@ class DynInst : public ExecContext, public RefCounted
     /** Predicted PC state after this instruction. */
     std::unique_ptr<PCStateBase> predPC;
 
+    // TODO JV PBTB INFO: What happened when we predicted in FETCH
+    int predBTBReg;
+    InstSeqNum predBTBVersion;
+    bool predBTBExhausted; //JV: technically should be a flag but I'd rather
+                           //    keep them all in one place
+
     /** The Macroop if one exists */
     const StaticInstPtr macroop;
 
@@ -523,6 +529,19 @@ class DynInst : public ExecContext, public RefCounted
     {
         instFlags[PredTaken] = predicted_taken;
     }
+
+
+    // === TODO JV: PBTB prediction info
+    void setPredBTBReg(int breg) { predBTBReg = breg; }
+    int readPredBTBReg()         { return predBTBReg; }
+
+    void setPredBTBVersion(InstSeqNum vers) { predBTBVersion = vers; }
+    InstSeqNum readPredBTBVersion()         { return predBTBVersion; }
+
+    void setPredBTBExhausted(bool exh) { predBTBExhausted = exh; }
+    bool readPredBTBExhausted()        { return predBTBExhausted; }
+    // ==== END PBTB prediction info
+
 
     /** Returns whether the instruction mispredicted. */
     bool

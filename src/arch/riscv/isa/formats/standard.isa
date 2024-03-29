@@ -541,15 +541,47 @@ def format CSROp(code, *opt_flags) {{
     exec_output = CSRExecute.subst(iop)
 }};
 
-def format BmovOp(code, *opt_flags) {{
-    regs = ['']
+def format BmovROp(code, *opt_flags) {{
+    regs = ['srcRegIdx(0)']
+    #iop = InstObjParams(name, Name, 'RegOp', code, opt_flags)
+    iop = InstObjParams(name, Name, 'RegOp',
+           {'code': code, 'regs': ','.join(regs)}, opt_flags)
+    header_output = BmovDeclare.subst(iop)
+    decoder_output = BasicConstructor.subst(iop)
+    decode_block = BasicDecode.subst(iop)
+    exec_output = BmovExecute.subst(iop)
+}};
+
+def format BmovIOp(code, *opt_flags) {{
+    regs = ['srcRegIdx(0)']
     iop = InstObjParams(name, Name, 'ImmOp<int64_t>',
         {'code': code, 'imm_code': 'imm = IMM12;',
          'regs': ','.join(regs)}, opt_flags)
     header_output = BmovDeclare.subst(iop)
     decoder_output = ImmConstructor.subst(iop)
     decode_block = BasicDecode.subst(iop)
-    exec_output = BmovExecute.subst(iop)
+    exec_output = BmovIExecute.subst(iop)
+}};
+
+def format BmovJOp(code, *opt_flags) {{
+    regs = ['srcRegIdx(0)']
+    #regs = ['']
+    imm_code = """
+                imm = UJIMMBITS10TO1 << 1   |
+                      UJIMMBIT11 << 11      |
+                      UJIMMBITS19TO12 << 12 |
+                      IMMSIGN << 20;
+                imm = sext<21>(imm);
+               """
+    # TODO: to make it PC-relative, see JOp
+    # e.g.: pc = 'pc.set(pc.pc() + imm);'
+    iop = InstObjParams(name, Name, 'ImmOp<int64_t>',
+        {'code': code, 'imm_code': imm_code,
+         'regs': ','.join(regs)}, opt_flags)
+    header_output = BmovDeclare.subst(iop)
+    decoder_output = ImmConstructor.subst(iop)
+    decode_block = BasicDecode.subst(iop)
+    exec_output = BmovJExecute.subst(iop)
 }};
 
 
@@ -590,7 +622,71 @@ def template BmovExecute {{
     {
         std::stringstream ss;
         ss << mnemonic << ' ';
-        ss << imm;
+        //ss << 'b' << ss << RD;
+        ss << 'b' << RD << ", ";
+        //ss << srcRegIdx(0);
+        //ss << "rs1=" << RS1;
+        ss << registerName(srcRegIdx(0));
+        //std::vector<RegId> indices = {%(regs)s};
+        //for (const RegId& idx: indices)
+        //    ss << registerName(idx) << ", ";
+        return ss.str();
+    }
+}};
+
+def template BmovIExecute {{
+    Fault
+    %(class_name)s::execute(
+        ExecContext *xc, trace::InstRecord *traceData) const
+    {
+        %(op_decl)s;
+        %(op_rd)s;
+        %(code)s;
+        %(op_wb)s;
+        return NoFault;
+    }
+
+    std::string
+    %(class_name)s::generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const
+    {
+        std::stringstream ss;
+        ss << mnemonic << ' ';
+        //ss << 'b' << ss << RD;
+        ss << 'b' << RD << ", ";
+        //ss << srcRegIdx(0);
+        //ss << "rs1=" << RS1;
+        ss << registerName(srcRegIdx(0));
+        ss << " + " << std::showbase << std::hex << imm;
+        return ss.str();
+    }
+}};
+
+def template BmovJExecute {{
+    Fault
+    %(class_name)s::execute(
+        ExecContext *xc, trace::InstRecord *traceData) const
+    {
+        %(op_decl)s;
+        %(op_rd)s;
+        %(code)s;
+        %(op_wb)s;
+        return NoFault;
+    }
+
+    std::string
+    %(class_name)s::generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const
+    {
+        std::stringstream ss;
+        ss << mnemonic << ' ';
+        //ss << 'b' << ss << RD;
+        ss << 'b' << RD << ", ";
+        //TODO: need to list RS1 if it was part of the op?
+        if (OPCODE5 != 0x02 && OPCODE5 != 0x0a) {
+            //TODO: print rs1, since the I form of bmovs/t has a source reg
+        }
+        ss << std::showbase << std::hex << imm;
         return ss.str();
     }
 }};

@@ -502,6 +502,86 @@ decode QUADRANT default Unknown::unknown() {
             }
         }
 
+        // =========================================
+        //         ALL BMOV OPS TOGETHER
+
+        0x02: BmovJOp::bmovs({{
+            // 0 means set source: see o3/dyn_inst.hh
+            xc->setPBTB(0, RD, imm);
+            // imm should already be sign-extended by imm_code in the format
+        }}, IsBmov);
+
+        0x0a: BmovJOp::bmovt({{
+            // 1 means set source: see o3/dyn_inst.hh
+            xc->setPBTB(1, RD, imm);
+            // imm should already be sign-extended by imm_code in the format
+        }}, IsBmov);
+
+        0x15: decode FUNCT3 {
+            format BmovROp {
+                0x0: bmovc_bit({{
+                    //set condition to BIT, shift in bool(Rs1)
+                    xc->setPBTB(6, RD, rvSext(Rs1_sd));
+                }}, IsBmov);
+                0x1: bmovc_tkn({{
+                    //set condition to TKN
+                    xc->setPBTB(4, RD, 0);
+                    Rs1_sd; //need to touch this or else src reg isn't
+                    // generated? will crash when trying
+                    // to print disassembly.
+                }}, IsBmov);
+            }
+        }
+
+        0x16: decode FUNCT3 {
+            format BmovIOp {
+                0x0: bmovs_I({{
+                    // set src
+                    xc->setPBTB(0, RD, rvSext(Rs1_sd + imm));
+                }}, IsBmov);
+                0x1: bmovt_I({{
+                    // set tgt
+                    xc->setPBTB(1, RD, rvSext(Rs1_sd + imm));
+                }}, IsBmov);
+
+            }
+        }
+
+        0x1d: decode FUNCT3 {
+            format BmovIOp {
+                0x0: bmovc_loop({{
+                    //set condition to loop(rs1+imm)
+                    xc->setPBTB(5, RD, rvSext(Rs1_sd + imm));
+                }}, IsBmov);
+            }
+        }
+
+        // ==== OLD Opcodes (v0.0)
+        // 0x0a: decode FUNCT3 {
+        //     format BmovIOp {
+        //         0x0: bmovs({{
+        //             xc->setPBTB(0, RD, rvSext(Rs1_sd + imm));
+        //         }}, IsBmov);
+        //         0x1: bmovt({{
+        //             xc->setPBTB(1, RD, rvSext(Rs1_sd + imm));
+        //         }}, IsBmov);
+        //         0x4: bmovc_t({{
+        //             xc->setPBTB(4, RD, rvSext(Rs1_sd + imm));
+        //         }}, IsBmov);
+        //         0x5: bmovc_l({{
+        //             xc->setPBTB(5, RD, rvSext(Rs1_sd + imm));
+        //         }}, IsBmov);
+        //         0x6: bmovc_b({{
+        //             xc->setPBTB(6, RD, rvSext(Rs1_sd + imm));
+        //         }}, IsBmov);
+        //         0x7: bmovc_bc({{
+        //             xc->setPBTB(7, RD, rvSext(Rs1_sd + imm));
+        //         }}, IsBmov);
+        //     }
+        // }
+
+        // ==========================================
+
         0x03: decode FUNCT3 {
             format FenceOp {
                 0x0: fence({{
@@ -809,28 +889,6 @@ decode QUADRANT default Unknown::unknown() {
         }
 
 
-        0x0a: decode FUNCT3 {
-            format BmovOp {
-                0x0: bmovs({{
-                    xc->setPBTB(0, RD, rvSext(Rs1_sd + imm));
-                }}, IsBmov);
-                0x1: bmovt({{
-                    xc->setPBTB(1, RD, rvSext(Rs1_sd + imm));
-                }}, IsBmov);
-                0x4: bmovc_t({{
-                    xc->setPBTB(4, RD, rvSext(Rs1_sd + imm));
-                }}, IsBmov);
-                0x5: bmovc_l({{
-                    xc->setPBTB(5, RD, rvSext(Rs1_sd + imm));
-                }}, IsBmov);
-                0x6: bmovc_b({{
-                    xc->setPBTB(6, RD, rvSext(Rs1_sd + imm));
-                }}, IsBmov);
-                0x7: bmovc_bc({{
-                    xc->setPBTB(7, RD, rvSext(Rs1_sd + imm));
-                }}, IsBmov);
-            }
-        }
 
 
         0x0b: decode FUNCT3 {

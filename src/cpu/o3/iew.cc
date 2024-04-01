@@ -381,6 +381,11 @@ IEW::squash(ThreadID tid)
 {
     DPRINTF(IEW, "[tid:%i] Squashing all instructions.\n", tid);
 
+    // //TODO JV: PBTB doesn't yet handle exceptions (squash in IEW)
+    // // so panic for now so we can catch it
+    // panic("JV PBTB Doesn't handle squashing in IEW!\n");
+    DPRINTF(IEW, "[tid:%i] WARNING: PBTB DOESN'T HANDLE SQUASHING YET\n", tid);
+
     // Tell the IQ to start squashing.
     instQueue.squash(tid);
 
@@ -418,6 +423,11 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
             " PC: %s "
             "\n", tid, inst->seqNum, inst->pcState() );
 
+    //TODO JV: We should never hit this case, since we no longer squash
+    // from branches, by the time a pb passes decode it should be verified
+    // as correct
+    panic("JV PBTB Should never squash due to branch in IEW!\n");
+
     if (!toCommit->squash[tid] ||
             inst->seqNum < toCommit->squashedSeqNum[tid]) {
         toCommit->squash[tid] = true;
@@ -440,6 +450,12 @@ IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
 {
     DPRINTF(IEW, "[tid:%i] Memory violation, squashing violator and younger "
             "insts, PC: %s [sn:%llu].\n", tid, inst->pcState(), inst->seqNum);
+
+    // //TODO JV: PBTB doesn't yet handle exceptions (squash in IEW)
+    // // when we encounter memorder violations, we'll need to force
+    // them to stall until commit, then do our reload-pbtb-from-commit strat
+    panic("JV PBTB Doesn't handle squashing from memorder in IEW!\n");
+
     // Need to include inst->seqNum in the following comparison to cover the
     // corner case when a branch misprediction and a memory violation for the
     // same instruction (e.g. load PC) are detected in the same cycle.  In this

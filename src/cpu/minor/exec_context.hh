@@ -160,7 +160,7 @@ class ExecContext : public gem5::ExecContext
 
     // Sets the precomputed-BTB structure
     void
-    setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
+    setPBTB(uint8_t id, uint8_t btb_slot, Addr val, int64_t val2) override
     {
         uint8_t a = id;
         printf("Hello PBTB(%d)", a);

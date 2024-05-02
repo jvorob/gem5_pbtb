@@ -1525,26 +1525,36 @@ void PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
     pmap->source[breg] = source_addr;
     pmap->version[breg]++; //TODO: set this to seqNum instead
+
+    // setSource also resets it to an invalid branch
+    pmap->cond_type[breg]    = NoBranch;
+    pmap->cond_val[breg]     = 0;
+    pmap->cond_aux_val[breg] = 0;
 }
 void PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
                                  int breg, Addr target_addr) {
     assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
     pmap->target[breg] = target_addr;
     pmap->version[breg]++; //TODO: set this to seqNum instead
+
+    // setTarget also resets it to a taken branch
+    pmap->cond_type[breg]    = Taken;
+    pmap->cond_val[breg]     = 0;
+    pmap->cond_aux_val[breg] = 0;
 }
 
-// Sets the condition for a given branch
-// immVal and regVal treated differently for different types?
+// Sets the condition for a breg in a pmap
+// val and n are treated differently depending on conditionType:
 // - Taken or NotTaken ignore it
-// - LoopTaken will be taken (immVal + regVal) times, then NT once, then repeat
-// - TODO: LoopNotTaken?
-// - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
-//     many bits of regval loop to form the pattern
+// - LoopTaken will be taken (val) times, then NT once, then repeat
+// - ShiftBit takes a bitstring in val, and enqueues the bottom n bits of it
 //
 void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
                                   int breg,
                                   BranchType conditionType,
-                                  uint64_t val) {
+                                  uint64_t val,
+                                  int64_t n) {
+
     //LATER TODO: we shouldn't actually need checkpoints on bmovs, only on
     // branches (whether real or false positives)
     // However, we can't make that work until we have branches stall in decode
@@ -1590,14 +1600,22 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
             //    pmap->cond_aux_val[breg] = 0; // num_bits
             //}
 
+            // TODO: is there any reason to shift in 0 bits?
+            // Maybe as a way to clear it?
+            assert(n > 0 && n <= 64); //PBTB shiftbits must be in [1-64]
+
+            {
+            // mask out bottom n bits (I should probably use a macro for this)
+            uint64_t bottom_n_bits = n >= 64 ? val : val & ((1L<<n)-1);
+
             // Bits shifted out at LSB, shifted in at bit N,
             // where N is current size of array
             // e.g. if curr_size == e.g. 3 bits, next bit comes in at bit 3
-            pmap->cond_val[breg] |= (val?1:0) <<
-                                pmap->cond_aux_val[breg];
-            pmap->cond_aux_val[breg] += 1; // num_bits++
 
-            {
+            pmap->cond_val[breg] |= bottom_n_bits <<
+                                pmap->cond_aux_val[breg];
+            pmap->cond_aux_val[breg] += n; // num_bits+=n
+
             uint64_t bits = pmap->cond_val[breg];
             uint64_t numbits = pmap->cond_aux_val[breg];
             DPRINTF(Exec, "PBTB (X): bmovc_bit b%d: data{%s}(%d)\n",
@@ -1606,8 +1624,9 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
             }
 
             // make sure we don't touch the sign bit (just to be safe)
+            // TODO: we should probably allow 64, crash at 65?
+            // TODO: either way, this should trigger an exception I think
             assert(pmap->cond_aux_val[breg] <= 63);
-            //TODO: handle overflow propely?
             break;
         case ShiftBit_Clear:
         default:
@@ -1740,6 +1759,7 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
 // (these use the per-map functions but touch multiple maps)
 
 
+// == Each of these should correspond to one bmov instruction
 void PrecomputedBTB::setSource(int breg, Addr source_addr) {
     m_setSource(&map_fetch, breg, source_addr);
     m_setSource(&map_final, breg, source_addr);
@@ -1748,10 +1768,18 @@ void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
     m_setTarget(&map_fetch, breg, target_addr);
     m_setTarget(&map_final, breg, target_addr);
 }
-void PrecomputedBTB::setCondition(InstSeqNum seqNum,
-                    int breg, BranchType conditionType, uint64_t val) {
-    m_setCondition(&map_fetch, breg, conditionType, val);
-    m_setCondition(&map_final, breg, conditionType, val);
+void PrecomputedBTB::setCondition(int breg, BranchType conditionType,
+                    uint64_t val, int64_t n) {
+    m_setCondition(&map_fetch, breg, conditionType, val, n);
+    m_setCondition(&map_final, breg, conditionType, val, n);
+}
+
+// Just an alias for the previous one
+// We only use n for the ShiftBit branch type, so can omit it otherwise
+void PrecomputedBTB::setCondition(int breg, BranchType conditionType,
+                    uint64_t val) {
+    m_setCondition(&map_fetch, breg, conditionType, val, 0);
+    m_setCondition(&map_final, breg, conditionType, val, 0);
 }
 
 

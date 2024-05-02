@@ -201,15 +201,13 @@ class PrecomputedBTB
     void m_setSource(struct pbtb_map *pmap, int breg, Addr source_addr);
     void m_setTarget(struct pbtb_map *pmap, int breg, Addr target_addr);
 
-    // Sets the condition for a given branch
-    // immVal and regVal treated differently for different types?
+    // Sets the condition for a given breg
+    // val treated differently for different types?
     // - Taken or NotTaken ignore it
-    // - LoopTaken will be taken (immVal + regVal) times, then NT, than stall
-    // - TODO: LoopNotTaken?
-    // - ShiftReg takes a bitstring in regVal, and immVal[5:0] determines how
-    //     many bits of regval loop to form the pattern
-    void m_setCondition(struct pbtb_map *pmap,
-                      int breg, BranchType conditionType, uint64_t val);
+    // - LoopTaken will be taken (val) times, then NT, than stall
+    // - ShiftBit takes a bitstring in val, bottom n bits shifted in
+    void m_setCondition(struct pbtb_map *pmap, int breg,
+            BranchType conditionType, uint64_t val, int64_t n);
 
     // Queries a pmap (consuming bits in the process)
     // returns a resultType describing whether a match was found and what kind
@@ -226,8 +224,10 @@ class PrecomputedBTB
     // it if we do checkpointing again and I'm too lazy to take it out rn
     void setSource(int breg, Addr source_addr);
     void setTarget(int breg, Addr target_addr);
-    void setCondition(InstSeqNum seqNum,
-                      int breg, BranchType conditionType, uint64_t val);
+    void setCondition(int breg,
+                      BranchType conditionType, uint64_t val);
+    void setCondition(int breg,
+                      BranchType conditionType, uint64_t val, int64_t n);
 
 
     // Overwrite map_fetch with map_finalize

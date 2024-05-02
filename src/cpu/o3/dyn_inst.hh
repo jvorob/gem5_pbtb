@@ -1054,41 +1054,55 @@ class DynInst : public ExecContext, public RefCounted
     }
 
 
+    // ===== PBTB Passthrough functions:
+    //   (the actual PrecomputedBTB object is on cpu)
+
+
     // Sets the precomputed-BTB structure
+    // This is an awkward passthrough interface to the PrecomputedBTB structure
+    // on cpu.
+    // addr is either an absolute address, bit/bits, number of iterations
+    // n is only relevant for C_NBITS
     void
-    setPBTB(uint8_t id, uint8_t btb_slot, Addr addr) override
+    setPBTB(uint8_t op, uint8_t btb_slot, Addr addr, int64_t n) override
     {
-        //TODO: move these elswhere
+
+
+        //TODO: move these elswhere. Maybe into exec_context?
         //NOTE: these don't correspond to the PBTB::BranchType enum, even
         //      though they look like they do, since they also include
         //      bmovs and bmovt in them
-        const int BMOV_FUNCT3_SRC        = 0;
-        const int BMOV_FUNCT3_TGT        = 1;
-        const int BMOV_FUNCT3_C_TAKEN    = 4;
-        const int BMOV_FUNCT3_C_LOOP     = 5;
-        const int BMOV_FUNCT3_C_BIT      = 6;
-        const int BMOV_FUNCT3_C_BITCLEAR = 7;
+        const int BMOV_OP_SRC        = 0;
+        const int BMOV_OP_TGT        = 1;
+        const int BMOV_OP_C_TAKEN    = 4;
+        const int BMOV_OP_C_LOOP     = 5;
+        const int BMOV_OP_C_BITS     = 6;
+        const int BMOV_OP_C_BITCLEAR = 7;
 
-        switch(id) {
-            case BMOV_FUNCT3_SRC:
+        //Note: old code needed to pass in sequence number
+        // of current op, can just get it as `seqNum`
+
+        switch(op) {
+            case BMOV_OP_SRC:
                 cpu->PBTB.setSource(btb_slot, addr);
                 break;
-            case BMOV_FUNCT3_TGT:
+            case BMOV_OP_TGT:
                 cpu->PBTB.setTarget(btb_slot, addr);
                 break;
-            case BMOV_FUNCT3_C_TAKEN:
-                cpu->PBTB.setCondition(seqNum,
+            case BMOV_OP_C_TAKEN:
+                cpu->PBTB.setCondition(
                         btb_slot, PrecomputedBTB::BranchType::Taken, 1);
                 break;
-            case BMOV_FUNCT3_C_LOOP:
-                cpu->PBTB.setCondition(seqNum,
+            case BMOV_OP_C_LOOP:
+                cpu->PBTB.setCondition(
                         btb_slot, PrecomputedBTB::BranchType::LoopN, addr);
                 break;
-            case BMOV_FUNCT3_C_BIT:
-                cpu->PBTB.setCondition(seqNum,
-                        btb_slot, PrecomputedBTB::BranchType::ShiftBit, addr);
+            case BMOV_OP_C_BITS:
+                cpu->PBTB.setCondition(
+                        btb_slot, PrecomputedBTB::BranchType::ShiftBit,
+                        addr, n);
                 break;
-            case BMOV_FUNCT3_C_BITCLEAR:
+            case BMOV_OP_C_BITCLEAR:
                 panic("unsupported bitclear in PBTB\n");
                 // cpu->PBTB.setCondition(seqNum, btb_slot,
                 //         PrecomputedBTB::BranchType::ShiftBit_Clear, addr);

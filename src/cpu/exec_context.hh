@@ -101,12 +101,14 @@ class ExecContext
 
     /**
      * Sets an entry in the precomputed-BTB to control future branches
-     * src_tgt_cond: 0 means set src, 1 means set tgt, 2 means set condition
-     * btb_slot: 5-bit index
-     * addr: currently an absolute 20-bit immediate, TBD
+     * src_tgt_cond: 0 means set src, 1 means set tgt, higher values are conds
+     *               (see definitions in o3/dyn_inst.hh)
+     * btb_slot: 5-bit breg index
+     * val: absolute address or primary value for condition
+     * n: secondary value for condition
      */
     virtual void setPBTB(uint8_t src_tgt_cond, uint8_t btb_slot,
-                         Addr addr) = 0;
+                         Addr val, int64_t n) = 0;
 
     /** @} */
 

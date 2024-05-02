@@ -244,7 +244,9 @@ Decode::checkStall(ThreadID tid) const
     if (insts_to_decode.size() > 0) {
         DynInstPtr inst = insts_to_decode.front();
 
-        if (inst->isDirectCtrl() && !isPBReadyToFinalize(inst))
+        if (    (inst->isDirectCtrl()
+                    || inst->isBmov()) // TODO JV TEMP: Bmov dependencies hack
+             && !isPBReadyToFinalize(inst))
         {
             DPRINTF(Decode,"[tid:%i] Stalling for pb finalize "
                            "(in checkStall)\n", tid);
@@ -795,7 +797,8 @@ Decode::decodeInsts(ThreadID tid)
         // TODO JV: pb AND not squashed (checked above)
         // If it's a pb or it was predicted as a pb, need to
         // make sure we're ready to finalize it
-        if ((inst->readPredBTBReg() >= 0 || inst->isControl())
+        if ((inst->readPredBTBReg() >= 0 || inst->isControl()
+                    || inst->isBmov()) //TODO JV TEMP: Bmov dependency hack
                 && !isPBReadyToFinalize(inst))
         {
             DPRINTF(Decode,"[tid:%i] Stalling for pb finalize\n", tid);

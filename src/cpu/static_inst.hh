@@ -196,6 +196,7 @@ class StaticInst : public RefCounted, public StaticInstFlags
 
     //todo JV
     bool isBmov() const { return flags[IsBmov]; }
+    bool isPb() const { return flags[IsPb]; }
 
     bool
     isHtmCmd() const

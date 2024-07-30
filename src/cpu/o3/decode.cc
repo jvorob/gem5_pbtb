@@ -226,7 +226,7 @@ Decode::checkStall(ThreadID tid) const
     bool ret_val = false;
 
     if (stalls[tid].rename) {
-        DPRINTF(Decode,"[tid:%i] Stall fom Rename stage detected.\n", tid);
+        DPRINTF(Decode,"[tid:%i] Stall from Rename stage detected.\n", tid);
         ret_val = true;
     }
 
@@ -244,9 +244,11 @@ Decode::checkStall(ThreadID tid) const
     if (insts_to_decode.size() > 0) {
         DynInstPtr inst = insts_to_decode.front();
 
-        if (    (inst->isDirectCtrl()
-                    || inst->isBmov()) // TODO JV TEMP: Bmov dependencies hack
-             && !isPBReadyToFinalize(inst))
+        // WARNING: This check is duplicated in Decode::decodeInsts(...)
+        // MAKE SURE BOTH HAVE THE SAME LOGIC
+        if ( (inst->isPb() || inst->readPredBTBReg() >= 0)
+             && !inst->isSquashed()
+             && !isPBReadyToFinalize(inst) )
         {
             DPRINTF(Decode,"[tid:%i] Stalling for pb finalize "
                            "(in checkStall)\n", tid);
@@ -793,17 +795,19 @@ Decode::decodeInsts(ThreadID tid)
             continue;
         }
 
-        // TODO JV: change this to isPB
-        // TODO JV: pb AND not squashed (checked above)
         // If it's a pb or it was predicted as a pb, need to
         // make sure we're ready to finalize it
-        if ((inst->readPredBTBReg() >= 0 || inst->isControl()
-                    || inst->isBmov()) //TODO JV TEMP: Bmov dependency hack
+        // WARNING: this check is duplicated in Decode::checkStall()
+        // MAKE SURE BOTH HAVE THE SAME LOGIC
+        if ( (inst->isPb() || inst->readPredBTBReg() >= 0)
+                // && !inst->isSquashed() // Not needed: isSquashed check above
                 && !isPBReadyToFinalize(inst))
         {
             DPRINTF(Decode,"[tid:%i] Stalling for pb finalize\n", tid);
-            //DPRINTF(Decode, "JV PBTB: Blocking branch in finalize"
-            //                " (in decode)!\n");
+            //DPRINTF(Decode,"[tid:%i] Stalling inst %d, readPredBTBreg:%d, "
+            //               "isControl:%d, isBmov:%d\n",
+            //    inst->seqNum, inst->readPredBTBReg(),
+            //    inst->isControl(), inst->isBmov());
 
             insts_to_decode.push_front(inst);
             // push_back has to happen first so block()
@@ -878,10 +882,10 @@ Decode::decodeInsts(ThreadID tid)
 
         // PBTB sees a branch where it shouldn't be, or sees no branch
         // where there should be one (Incorrect code)
-        if ((inst->isControl()  && d_breg<0) ||
-           (!inst->isControl() && d_breg >= 0)) {
-            DPRINTF(Decode, "ERROR: inst->isControl:%c, d_breg=%d\n",
-                    inst->isControl()?'T':'F', d_breg);
+        if ((inst->isPb() && d_breg <  0) ||
+           (!inst->isPb() && d_breg >= 0)) {
+            DPRINTF(Decode, "ERROR: [sn:%d] inst->isPb:%c, d_breg=%d\n",
+                    inst->seqNum, inst->isPb()?'T':'F', d_breg);
 
             panic("PBTB doesn't match placeholder"
                   " branch in finalize (in decode)\n");

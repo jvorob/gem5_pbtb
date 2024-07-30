@@ -178,7 +178,7 @@ class PhysRegFile
         const RegIndex reg_idx = arch_reg.index();
         switch (type) {
           case MiscRegClass:   return &miscRegIds[reg_idx];
-          case BranchRegClass: return &branchRegIds[reg_idx];
+          //case BranchRegClass: return &branchRegIds[reg_idx]; // JV PBTB
           default:
             panic("Unsupported register class type %d.", type);
         }
@@ -206,6 +206,13 @@ class PhysRegFile
             val = vectorElemRegFile.reg(idx);
             DPRINTF(IEW, "RegFile: Access to vector element register %i "
                     "has data %#x\n", idx, val);
+            return val;
+          case BranchRegClass:
+            //TODO: JV PBTB: if we actually care about branch reg vals in
+            // gem5, this won't work? need to setreg(reg, *), pass in pointer
+            val = branchRegFile.reg(idx);
+            DPRINTF(IEW, "RegFile: Access to branch register %i, has "
+                    "data %#x\n", idx, val);
             return val;
           case CCRegClass:
             val = ccRegFile.reg(idx);
@@ -302,6 +309,13 @@ class PhysRegFile
             vectorElemRegFile.reg(idx) = val;
             DPRINTF(IEW, "RegFile: Setting vector element register %i to "
                     "%#x\n", idx, val);
+            break;
+          case BranchRegClass:
+            //TODO: JV PBTB: if we actually care about branch reg vals in
+            // gem5, this won't work? need to setreg(reg, *), pass in pointer
+            branchRegFile.reg(idx) = val;
+            DPRINTF(IEW, "RegFile: Setting branch register %i to %#x\n",
+                    idx, val);
             break;
           case CCRegClass:
             ccRegFile.reg(idx) = val;

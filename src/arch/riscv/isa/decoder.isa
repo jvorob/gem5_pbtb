@@ -525,6 +525,9 @@ decode QUADRANT default Unknown::unknown() {
             xc->setPBTB(0, RD, rvZext((imm + PC) & (~0x1)), 0);
             // imm should already be sign-extended by imm_code in the format
             // set pc-relative addr
+
+            BrBmov = BrBmov+1; // Set bmov register so dep-tracking sees it
+
         }}, IsBmov);
 
         0x0a: BmovJOp::bmovt({{
@@ -534,6 +537,7 @@ decode QUADRANT default Unknown::unknown() {
             xc->setPBTB(1, RD, rvZext((imm + PC) & (~0x1)), 0);
             // imm should already be sign-extended by imm_code in the format
             // set pc-relative addr
+            BrBmov = BrBmov+1; // Set bmov register so dep-tracking sees it
         }}, IsBmov);
 
 
@@ -545,31 +549,43 @@ decode QUADRANT default Unknown::unknown() {
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) == rvSext(Rs2) ? 1:0,
                             1);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x1: bmovc_bne({{
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) != rvSext(Rs2) ? 1:0,
                             1);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x4: bmovc_blt({{
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) < rvSext(Rs2) ? 1:0,
                             1);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x5: bmovc_bge({{
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) >= rvSext(Rs2) ? 1:0,
                             1);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x6: bmovc_bltu({{
                     xc->setPBTB(6, RD,
                             rvZext(Rs1) < rvZext(Rs2) ? 1:0,
                             1);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x7: bmovc_bgeu({{
                     xc->setPBTB(6, RD,
                             rvZext(Rs1) >= rvZext(Rs2) ? 1:0,
                             1);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
             }
         }
@@ -580,11 +596,15 @@ decode QUADRANT default Unknown::unknown() {
                     // set src, to absolute addr reg+imm
                     xc->setPBTB(0, RD,
                             rvZext((Rs1_sd + imm) & (~0x1)), 0);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x1: bmovt_I({{
                     // set tgt, to absolute addr reg+imm
                     xc->setPBTB(1, RD,
                             rvZext((Rs1_sd + imm) & (~0x1)), 0);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
             }
         }
@@ -605,7 +625,7 @@ decode QUADRANT default Unknown::unknown() {
             Rs1_sd; //need to touch this or else src reg isn't
             // generated? will crash when trying
             // to print disassembly.
-        }}, IsControl, IsDirectControl, IsCondControl);
+        }}, IsPb, IsControl, IsDirectControl, IsCondControl);
 
         0x1d: decode FUNCT3 {
             format BmovIOp {
@@ -614,6 +634,8 @@ decode QUADRANT default Unknown::unknown() {
                     // BMOV_OP_BITS = 6
                     //set condition to BIT, shift in bottom imm bits of rs1
                     xc->setPBTB(6, RD, rvZext(Rs1_sd), rvSext(imm));
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
                 0x4: bmovc_loop({{
                     //set condition to loop(rs1+imm)
@@ -621,6 +643,8 @@ decode QUADRANT default Unknown::unknown() {
                     //    BMOV_OP_C_LOOP     = 5;
 
                     xc->setPBTB(5, RD, rvZext(Rs1_sd + imm), 0);
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
 
                 0x7: bmovc_tkn({{
@@ -632,6 +656,8 @@ decode QUADRANT default Unknown::unknown() {
                     Rs1_sd; //need to touch this or else src reg isn't
                     // generated? will crash when trying
                     // to print disassembly.
+                    BrBmov = BrBmov+1;
+                    // Set bmov register so dep-tracking sees it
                 }}, IsBmov);
             }
         }

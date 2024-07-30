@@ -606,6 +606,7 @@ class DynInst : public ExecContext, public RefCounted
 
     // TODO JV PBTB
     bool isBmov() const { return staticInst->isBmov(); }
+    bool isPb() const { return staticInst->isPb(); }
 
     uint64_t
     getHtmTransactionUid() const override

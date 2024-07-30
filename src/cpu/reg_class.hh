@@ -143,8 +143,8 @@ class RegId
     isRenameable() const
     {
         return classValue() != MiscRegClass
-            && classValue() != InvalidRegClass
-            && classValue() != BranchRegClass; // JV PBTB
+            && classValue() != InvalidRegClass;
+            //&& classValue() != BranchRegClass; // JV PBTB
     }
 
     /** @return true if it is of the specified class. */

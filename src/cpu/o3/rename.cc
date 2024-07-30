@@ -1042,6 +1042,7 @@ Rename::renameSrcRegs(const DynInstPtr &inst, ThreadID tid)
             break;
           case CCRegClass:
           case MiscRegClass:
+          case BranchRegClass: // JV: PBTB TODO, these dont get renamed?
             break;
 
           default:
@@ -1254,7 +1255,8 @@ Rename::readFreeEntries(ThreadID tid)
     }
 
     DPRINTF(Rename, "[tid:%i] Free IQ: %i, Free ROB: %i, "
-                    "Free LQ: %i, Free SQ: %i, FreeRM %i(%i %i %i %i %i %i %i)\n",
+                    "Free LQ: %i, Free SQ: %i, "
+                    "FreeRM %i(%i %i %i %i %i %i %i %i)\n",
             tid,
             freeEntries[tid].iqEntries,
             freeEntries[tid].robEntries,
@@ -1267,7 +1269,8 @@ Rename::readFreeEntries(ThreadID tid)
             renameMap[tid]->numFreeEntries(VecElemClass),
             renameMap[tid]->numFreeEntries(VecPredRegClass),
             renameMap[tid]->numFreeEntries(MatRegClass),
-            renameMap[tid]->numFreeEntries(CCRegClass));
+            renameMap[tid]->numFreeEntries(CCRegClass),
+            renameMap[tid]->numFreeEntries(BranchRegClass));
 
     DPRINTF(Rename, "[tid:%i] %i instructions not yet in ROB\n",
             tid, instsInProgress[tid]);

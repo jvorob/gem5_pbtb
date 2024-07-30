@@ -169,6 +169,9 @@ class BaseO3CPU(BaseCPU):
         32, "Number of physical predicate registers"
     )
     numPhysMatRegs = Param.Unsigned(2, "Number of physical matrix registers")
+    numPhysBranchRegs = Param.Unsigned(
+        64, "Number of physical branch registers (PBTB)"
+    )  # JV PBTB
     # most ISAs don't use condition-code regs, so default is 0
     numPhysCCRegs = Param.Unsigned(0, "Number of physical cc registers")
     numIQEntries = Param.Unsigned(64, "Number of instruction queue entries")

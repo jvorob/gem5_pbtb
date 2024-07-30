@@ -85,4 +85,10 @@ def operands {{
 #Program Counter Operands
     'PC': PCStateOp('ud', 'pc', (None, None, 'IsControl'), 7),
     'NPC': PCStateOp('ud', 'npc', (None, None, 'IsControl'), 8),
+
+# JV PBTB/breg operands
+#   note: not setting these to set isbmov flag
+#   note: as of PBTB spec v0.2: pbal ops keep pb in rs1, other ins rd
+    'BrBmov': BranchRegOp('ud', 'RD', 1),
+    'BrPb': BranchRegOp('ud', 'RS1', 1),
 }};

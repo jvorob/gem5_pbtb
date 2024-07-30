@@ -40,6 +40,7 @@
 #include "arch/riscv/mmu.hh"
 #include "arch/riscv/pagetable.hh"
 #include "arch/riscv/pmp.hh"
+#include "arch/riscv/regs/branch.hh"
 #include "arch/riscv/regs/float.hh"
 #include "arch/riscv/regs/int.hh"
 #include "arch/riscv/regs/misc.hh"
@@ -252,6 +253,7 @@ ISA::ISA(const Params &p) :
     _regClasses.push_back(&vecElemClass);
     _regClasses.push_back(&vecPredRegClass);
     _regClasses.push_back(&matRegClass);
+    _regClasses.push_back(&branchRegClass);
     _regClasses.push_back(&ccRegClass);
     _regClasses.push_back(&miscRegClass);
 

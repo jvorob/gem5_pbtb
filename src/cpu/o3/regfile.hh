@@ -95,6 +95,10 @@ class PhysRegFile
     RegFile matRegFile;
     std::vector<PhysRegId> matRegIds;
 
+    /** NEW: JV PBTB; Branch register file. */
+    RegFile branchRegFile;
+    std::vector<PhysRegId> branchRegIds;
+
     /** Condition-code register file. */
     RegFile ccRegFile;
     std::vector<PhysRegId> ccRegIds;
@@ -132,6 +136,9 @@ class PhysRegFile
      */
     unsigned numPhysicalMatRegs;
 
+    /** NEW: JV PBTB; Number of physical branch registers */
+    unsigned numPhysicalBranchRegs;
+
     /**
      * Number of physical CC registers
      */
@@ -150,6 +157,7 @@ class PhysRegFile
                 unsigned _numPhysicalVecRegs,
                 unsigned _numPhysicalVecPredRegs,
                 unsigned _numPhysicalMatRegs,
+                unsigned _numPhysicalBranchRegs, //JV PBTB
                 unsigned _numPhysicalCCRegs,
                 const BaseISA::RegClasses &classes);
 
@@ -164,9 +172,16 @@ class PhysRegFile
     /** @return the total number of physical registers. */
     unsigned totalNumPhysRegs() const { return totalNumRegs; }
 
-    /** Gets a misc register PhysRegIdPtr. */
-    PhysRegIdPtr getMiscRegId(RegIndex reg_idx) {
-        return &miscRegIds[reg_idx];
+    /** Gets PhysRegIdPtr for registers whose physical mapping is always 1:1 */
+    PhysRegIdPtr getNonRenameableRegId(const RegId& arch_reg) {
+        const RegClassType type = arch_reg.classValue();
+        const RegIndex reg_idx = arch_reg.index();
+        switch (type) {
+          case MiscRegClass:   return &miscRegIds[reg_idx];
+          case BranchRegClass: return &branchRegIds[reg_idx];
+          default:
+            panic("Unsupported register class type %d.", type);
+        }
     }
 
     RegVal
@@ -232,6 +247,11 @@ class PhysRegFile
             matRegFile.get(idx, val);
             DPRINTF(IEW, "RegFile: Access to matrix register %i, has "
                     "data %s\n", idx, matRegFile.regClass.valString(val));
+            break;
+          case BranchRegClass:
+            branchRegFile.get(idx, val);
+            DPRINTF(IEW, "RegFile: Access to branch register %i, has "
+                    "data %s\n", idx, branchRegFile.regClass.valString(val));
             break;
           case CCRegClass:
             *(RegVal *)val = getReg(phys_reg);
@@ -323,6 +343,11 @@ class PhysRegFile
             DPRINTF(IEW, "RegFile: Setting matrix register %i to %s\n",
                     idx, matRegFile.regClass.valString(val));
             matRegFile.set(idx, val);
+            break;
+          case BranchRegClass:
+            DPRINTF(IEW, "RegFile: Setting branch register %i to %s\n",
+                    idx, branchRegFile.regClass.valString(val));
+            branchRegFile.set(idx, val);
             break;
           case CCRegClass:
             setReg(phys_reg, *(RegVal *)val);

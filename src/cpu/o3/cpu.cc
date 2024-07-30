@@ -91,6 +91,7 @@ CPU::CPU(const BaseO3CPUParams &params)
               params.numPhysVecRegs,
               params.numPhysVecPredRegs,
               params.numPhysMatRegs,
+              params.numPhysBranchRegs,
               params.numPhysCCRegs,
               params.isa[0]->regClasses()),
 
@@ -203,6 +204,8 @@ CPU::CPU(const BaseO3CPUParams &params)
             numThreads * regClasses.at(VecPredRegClass)->numRegs());
     assert(params.numPhysMatRegs >=
             numThreads * regClasses.at(MatRegClass)->numRegs());
+    assert(params.numPhysBranchRegs >=
+            numThreads * regClasses.at(BranchRegClass)->numRegs());
     assert(params.numPhysCCRegs >=
             numThreads * regClasses.at(CCRegClass)->numRegs());
 

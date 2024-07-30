@@ -49,6 +49,7 @@
 #include <sstream>
 #include <string>
 
+#include "arch/riscv/regs/branch.hh" //JV PBTB bregs
 #include "arch/riscv/regs/float.hh"
 #include "arch/riscv/regs/int.hh"
 #include "base/types.hh"
@@ -130,6 +131,13 @@ registerName(RegId reg)
             return str.str();
         }
         return float_reg::RegNames[reg.index()];
+    } else if (reg.is(BranchRegClass)) {
+        if (reg.index() >= branch_reg::NumRegs) {
+            std::stringstream str;
+            str << "?? (b" << reg.index() << ')';
+            return str.str();
+        }
+        return branch_reg::RegNames[reg.index()];
     } else {
         /* It must be an InvalidRegClass, in RISC-V we should treat it as a
          * zero register for the disassembler to work correctly.

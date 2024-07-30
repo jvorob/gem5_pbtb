@@ -232,10 +232,11 @@ DebugFlag('FloatRegs')
 DebugFlag('VecRegs')
 DebugFlag('VecPredRegs')
 DebugFlag('MatRegs')
+DebugFlag('BranchRegs')
 DebugFlag('CCRegs')
 DebugFlag('MiscRegs')
 CompoundFlag('Registers', [ 'IntRegs', 'FloatRegs', 'VecRegs', 'VecPredRegs',
-                            'MatRegs', 'CCRegs', 'MiscRegs' ])
+                            'MatRegs', 'BranchRegs', 'CCRegs', 'MiscRegs' ])
 
 DebugFlag('Decoder', "Decoder debug output")
 DebugFlag('Faults', "Information about faults, exceptions, interrupts, etc")

@@ -569,6 +569,7 @@ class ISAParser(Grammar):
                 "ControlRegOp": ControlRegOperandDesc,
                 "MemOp": MemOperandDesc,
                 "PCStateOp": PCStateOperandDesc,
+                "BranchRegOp": BranchRegOperandDesc,
             }
         )
 

@@ -54,6 +54,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
                          unsigned _numPhysicalVecRegs,
                          unsigned _numPhysicalVecPredRegs,
                          unsigned _numPhysicalMatRegs,
+                         unsigned _numPhysicalBranchRegs,
                          unsigned _numPhysicalCCRegs,
                          const BaseISA::RegClasses &reg_classes)
     : intRegFile(*reg_classes.at(IntRegClass), _numPhysicalIntRegs),
@@ -65,7 +66,9 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
       vecPredRegFile(*reg_classes.at(VecPredRegClass),
               _numPhysicalVecPredRegs),
       matRegFile(*reg_classes.at(MatRegClass), _numPhysicalMatRegs),
+      branchRegFile(*reg_classes.at(BranchRegClass), _numPhysicalBranchRegs),
       ccRegFile(*reg_classes.at(CCRegClass), _numPhysicalCCRegs),
+
       numPhysicalIntRegs(_numPhysicalIntRegs),
       numPhysicalFloatRegs(_numPhysicalFloatRegs),
       numPhysicalVecRegs(_numPhysicalVecRegs),
@@ -74,6 +77,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
                   reg_classes.at(VecRegClass)->numRegs())),
       numPhysicalVecPredRegs(_numPhysicalVecPredRegs),
       numPhysicalMatRegs(_numPhysicalMatRegs),
+      numPhysicalBranchRegs(_numPhysicalBranchRegs),
       numPhysicalCCRegs(_numPhysicalCCRegs),
       totalNumRegs(_numPhysicalIntRegs
                    + _numPhysicalFloatRegs
@@ -81,6 +85,7 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
                    + numPhysicalVecElemRegs
                    + _numPhysicalVecPredRegs
                    + _numPhysicalMatRegs
+                   + _numPhysicalBranchRegs
                    + _numPhysicalCCRegs)
 {
     RegIndex phys_reg;
@@ -123,6 +128,12 @@ PhysRegFile::PhysRegFile(unsigned _numPhysicalIntRegs,
     // registers; put them onto the matrix free list.
     for (phys_reg = 0; phys_reg < numPhysicalMatRegs; phys_reg++) {
         matRegIds.emplace_back(*reg_classes.at(MatRegClass), phys_reg,
+                flat_reg_idx++);
+    }
+
+    // === NEW: JV PBTB
+    for (phys_reg = 0; phys_reg < numPhysicalBranchRegs; phys_reg++) {
+        branchRegIds.emplace_back(*reg_classes.at(BranchRegClass), phys_reg,
                 flat_reg_idx++);
     }
 
@@ -184,6 +195,12 @@ PhysRegFile::initFreeList(UnifiedFreeList *freeList)
         assert(matRegIds[reg_idx].index() == reg_idx);
     }
     freeList->addRegs(matRegIds.begin(), matRegIds.end());
+
+    // ==== NEW: JV PBTB =====
+    for (reg_idx = 0; reg_idx < numPhysicalBranchRegs; reg_idx++) {
+        assert(branchRegIds[reg_idx].index() == reg_idx);
+    }
+    freeList->addRegs(branchRegIds.begin(), branchRegIds.end());
 
     // The rest of the registers are the condition-code physical
     // registers; put them onto the condition-code free list.

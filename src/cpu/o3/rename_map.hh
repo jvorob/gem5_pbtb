@@ -227,10 +227,10 @@ class UnifiedRenameMap
         auto reg_class = arch_reg.classValue();
         if (reg_class == InvalidRegClass) {
             return &invalidPhysRegId;
-        } else if (reg_class == MiscRegClass) {
-            // misc regs aren't really renamed, they keep the same
+        } else if (!arch_reg.isRenameable()) {
+            // misc regs/branch regs aren't really renamed, they keep the same
             // mapping throughout the execution.
-            return regFile->getMiscRegId(arch_reg.index());
+            return regFile->getNonRenameableRegId(arch_reg);
         }
         return renameMaps[reg_class].lookup(arch_reg);
     }

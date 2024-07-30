@@ -625,3 +625,11 @@ class PCStateOperand(Operand):
 class PCStateOperandDesc(OperandDesc):
     def __init__(self, *args, **kwargs):
         super().__init__(PCStateOperand, *args, **kwargs)
+
+
+############### JV PBTB OPS #############
+
+
+class BranchRegOperandDesc(RegOperandDesc):
+    def __init__(self, *args, **kwargs):
+        super().__init__("branchRegClass", RegValOperand, *args, **kwargs)

@@ -72,6 +72,7 @@ class Scoreboard : public Named
     const unsigned ccRegOffset;
     const unsigned vecRegOffset;
     const unsigned vecPredRegOffset;
+    const unsigned branchRegOffset;
     const unsigned matRegOffset;
 
     /** The number of registers in the Scoreboard.  These
@@ -117,8 +118,10 @@ class Scoreboard : public Named
         vecRegOffset(ccRegOffset + reg_classes.at(CCRegClass)->numRegs()),
         vecPredRegOffset(vecRegOffset +
                 reg_classes.at(VecElemClass)->numRegs()),
-        matRegOffset(vecPredRegOffset +
+        branchRegOffset(vecPredRegOffset +
                 reg_classes.at(VecPredRegClass)->numRegs()),
+        matRegOffset(branchRegOffset +
+                reg_classes.at(BranchRegClass)->numRegs()),
         numRegs(matRegOffset + reg_classes.at(MatRegClass)->numRegs()),
         numResults(numRegs, 0),
         numUnpredictableResults(numRegs, 0),

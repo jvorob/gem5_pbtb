@@ -542,7 +542,7 @@ def format CSROp(code, *opt_flags) {{
 }};
 
 def format BmovROp(code, *opt_flags) {{
-    regs = ['srcRegIdx(0)']
+    regs = ['srcRegIdx(0)', 'srcRegIdx(1)', 'srcRegIdx(2)']
     #iop = InstObjParams(name, Name, 'RegOp', code, opt_flags)
     iop = InstObjParams(name, Name, 'RegOp',
            {'code': code, 'regs': ','.join(regs)}, opt_flags)
@@ -553,7 +553,7 @@ def format BmovROp(code, *opt_flags) {{
 }};
 
 def format BmovIOp(code, *opt_flags) {{
-    regs = ['srcRegIdx(0)']
+    regs = ['srcRegIdx(0)', 'srcRegIdx(1)']
     iop = InstObjParams(name, Name, 'ImmOp<int64_t>',
         {'code': code, 'imm_code': 'imm = IMM12;',
          'regs': ','.join(regs)}, opt_flags)
@@ -622,14 +622,9 @@ def template BmovExecute {{
     {
         std::stringstream ss;
         ss << mnemonic << ' ';
-        //ss << 'b' << ss << RD;
-        ss << 'b' << RD << ", ";
-        //ss << srcRegIdx(0);
-        //ss << "rs1=" << RS1;
-        ss << registerName(srcRegIdx(0));
-        //std::vector<RegId> indices = {%(regs)s};
-        //for (const RegId& idx: indices)
-        //    ss << registerName(idx) << ", ";
+        std::vector<RegId> indices = {%(regs)s};
+        for (const RegId& idx: indices)
+            ss << registerName(idx) << ", ";
         return ss.str();
     }
 }};
@@ -650,14 +645,21 @@ def template BmovIExecute {{
     %(class_name)s::generateDisassembly(Addr pc,
             const loader::SymbolTable *symtab) const
     {
-        std::stringstream ss;
-        ss << mnemonic << ' ';
         //ss << 'b' << ss << RD;
-        ss << 'b' << RD << ", ";
+        //ss << 'b' << RD << ", ";
         //ss << srcRegIdx(0);
         //ss << "rs1=" << RS1;
-        ss << registerName(srcRegIdx(0));
+        //ss << registerName(srcRegIdx(0)) << ", " ;
+        //ss << registerName(srcRegIdx(1));
+
+        std::stringstream ss;
+        ss << mnemonic << ' ';
+        std::vector<RegId> indices = {%(regs)s};
+        for (const RegId& idx: indices)
+            ss << registerName(idx) << ", ";
+        return ss.str();
         ss << " + " << std::showbase << std::hex << imm;
+
         return ss.str();
     }
 }};
@@ -678,14 +680,19 @@ def template BmovJExecute {{
     %(class_name)s::generateDisassembly(Addr pc,
             const loader::SymbolTable *symtab) const
     {
+        //ss << 'b' << ss << RD;
+        //ss << 'b' << RD << ", ";
+        // ss << registerName(srcRegIdx(0)) << ", " ;
+        // //TODO: need to list RS1 if it was part of the op?
+        // if (OPCODE5 != 0x02 && OPCODE5 != 0x0a) {
+        //     //TODO: print rs1, since the I form of bmovs/t has a source reg
+        // }
+
         std::stringstream ss;
         ss << mnemonic << ' ';
-        //ss << 'b' << ss << RD;
-        ss << 'b' << RD << ", ";
-        //TODO: need to list RS1 if it was part of the op?
-        if (OPCODE5 != 0x02 && OPCODE5 != 0x0a) {
-            //TODO: print rs1, since the I form of bmovs/t has a source reg
-        }
+        std::vector<RegId> indices = {%(regs)s};
+        for (const RegId& idx: indices)
+            ss << registerName(idx) << ", ";
         ss << std::showbase << std::hex << imm;
         return ss.str();
     }

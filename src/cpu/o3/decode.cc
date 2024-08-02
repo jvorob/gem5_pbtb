@@ -887,6 +887,8 @@ Decode::decodeInsts(ThreadID tid)
             DPRINTF(Decode, "ERROR: [sn:%d] inst->isPb:%c, d_breg=%d\n",
                     inst->seqNum, inst->isPb()?'T':'F', d_breg);
 
+            debug::findFlag(std::string("PBTBVerbose"))->enable();
+            cpu->PBTB.debugDump() ; //NOTE: THIS NEEDS PBTBVerbose to print
             panic("PBTB doesn't match placeholder"
                   " branch in finalize (in decode)\n");
             //TODO: change this to check pb and verify matching breg

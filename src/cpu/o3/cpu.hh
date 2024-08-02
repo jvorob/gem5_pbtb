@@ -60,6 +60,7 @@
 #include "cpu/o3/free_list.hh"
 #include "cpu/o3/iew.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/pbtb.hh"
 #include "cpu/o3/rename.hh"
 #include "cpu/o3/rob.hh"
 #include "cpu/o3/scoreboard.hh"
@@ -68,9 +69,6 @@
 #include "cpu/base.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/timebuf.hh"
-#include "debug/Decode.hh" //JV TODO DEBUG TEMP
-#include "debug/Exec.hh" //JV TODO DEBUG TEMP
-#include "debug/Fetch.hh" //JV TODO DEBUG TEMP
 #include "params/BaseO3CPU.hh"
 #include "sim/process.hh"
 
@@ -87,176 +85,6 @@ class Process;
 namespace o3
 {
 
-/**
- * JV ADDITION: TODO find somewhere more appropriate to stick this
- * Keeps track of branch sources, targets, conditions
- * Set by bmovs, bmovt, bmovc ops
- *
- * FOR NOW: set synchronously at execute time (commit time?), no
- * handling for speculation/squashing
- */
-class PrecomputedBTB
-{
-  public:
-    enum BranchType
-    {
-        NoBranch = 0, //Init value? Mostly for debugging
-        Taken,
-        LoopN, //Sets a counter, loops N times, then stops
-        ShiftBit, //Shifts a bit into the fifo, branching
-                  //consumes 1 bit each time
-
-        // PSEUDO-BRANCH-TYPE: can be passed in to specify different
-        // behavior but shouldn't be put into reg_cond_type
-        ShiftBit_Clear, // ShiftBit, but also resets the fifo??
-
-        //TODO: IF ADDING NEW BRANCH TYPE: UPDATE
-        //      BRANCHTYPECODES AND BRANCHTYPETOSTR
-    };
-
-    enum PBTBResultType
-    {
-        PR_NoMatch = 0,
-        PR_NotTaken,
-        PR_Taken,
-        PR_Exhaust,
-    };
-
-    //3-character codes for each branch type
-    const static char* BranchTypeCodes[];
-    const static char* BranchTypeStrs[];
-
-    const static int NUM_REGS = 32;
-    //const static int MAX_CHECKPOINTS = 32;
-
-    //Each checkpoint stores all this data
-    struct pbtb_map
-    {
-        //InstSeqNum seqNum; //The branch inst that started this checkpoint
-        int64_t    version[NUM_REGS]; // ++ each time this breg is modified.
-                                      // (except for bmovc_bit, if appending)
-        Addr       source[NUM_REGS]; // All addresses are absolute
-        Addr       target[NUM_REGS];
-        BranchType cond_type[NUM_REGS];  //defaults to NoBranch
-        int64_t   cond_val[NUM_REGS];
-        int64_t   cond_aux_val[NUM_REGS]; //for shiftreg, counts number
-                                                    //of bits held
-    };
-
-    struct pbtb_map map_fetch = {};
-    struct pbtb_map map_final = {}; // init to all 0s
-
-
-    //struct pbtp_map map;
-
-
-    //TODO remove this? I'm using shortcodes??
-    const static char* BranchTypeToStr(BranchType b, bool verbose){
-      switch(b) {
-        case NoBranch:        return "NoBranch";
-        case Taken:           return "Taken";
-        case LoopN:           return "Loop";
-        case ShiftBit:        return "ShiftBit";
-        case ShiftBit_Clear : return "ShiftBit_Clear";
-        default:              return "ERROR_UNKNOWN";
-      }
-    }
-
-  private:
-    ////Constructor: initializes all to 0
-    //Addr       reg_source[NUM_REGS] = {}; // All addresses are absolute
-    //Addr       reg_target[NUM_REGS] = {};
-    //BranchType reg_cond_type[NUM_REGS] = {};  //defaults to NoBranch
-    //uint64_t   reg_cond_val[NUM_REGS] = {};
-    //uint64_t   reg_cond_aux_val[NUM_REGS] = {}; //for shiftreg, counts number
-                                                //of bits held
-
-
-    static inline char debug_bit_buff[65];
-    const static char* debugPrintBottomBits(uint64_t bits, int n) {
-        debug_bit_buff[64] = '\0'; //null terminate just to be safe
-        n = std::min(n, 64);
-
-        int i;
-        for (i = 0; i < n; i++) {
-            int bit_offset = n - i - 1; //1st digit is at (bits >> (n-1))
-            int bit = (bits >> bit_offset) & 1;
-            debug_bit_buff[i] = bit ? '1':'0';
-        }
-        debug_bit_buff[i] = '\0';
-        return debug_bit_buff;
-    }
-
-
-  private:
-    // ==================== PER-MAP Functions:
-    // If the system wasn't pipelined, these would be sufficient
-    // Each of these acts on a single pbtb_map in the straightforward way
-
-
-    // Note: map_fetch and map_finalize should ONLY EVER DIFFER in number
-    // of loop iterations / shifted bits. All other modifications should apply
-    // simultaneously to both. map_commit (once it's in) might differ though
-
-    void m_setSource(struct pbtb_map *pmap, int breg, Addr source_addr);
-    void m_setTarget(struct pbtb_map *pmap, int breg, Addr target_addr);
-
-    // Sets the condition for a given breg
-    // val treated differently for different types?
-    // - Taken or NotTaken ignore it
-    // - LoopTaken will be taken (val) times, then NT, than stall
-    // - ShiftBit takes a bitstring in val, bottom n bits shifted in
-    void m_setCondition(struct pbtb_map *pmap, int breg,
-            BranchType conditionType, uint64_t val, int64_t n);
-
-    // Queries a pmap (consuming bits in the process)
-    // returns a resultType describing whether a match was found and what kind
-    // If a match is found, sets p_breg_out, p_version_out
-    // If the match is a taken branch, sets p_targetAddr_out
-    PBTBResultType m_queryPC(struct pbtb_map *pmap, Addr pcAddr,
-            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
-
-  public:
-    // ================== External-interface functions
-    // These should modify both map_fetch and map_final
-    // TODO: eventually these might need to modify commit?
-    // NOTE: we SHOULDNT need a seq num for bmovc anymore, but we might need
-    // it if we do checkpointing again and I'm too lazy to take it out rn
-    void setSource(int breg, Addr source_addr);
-    void setTarget(int breg, Addr target_addr);
-    void setCondition(int breg,
-                      BranchType conditionType, uint64_t val);
-    void setCondition(int breg,
-                      BranchType conditionType, uint64_t val, int64_t n);
-
-
-    // Overwrite map_fetch with map_finalize
-    void squashFinalizeToFetch();
-
-
-    // handles the PCstatebase nonsense, otherwise passthru to m_query_PC
-    //Note: if not taken, will advance pc
-    PBTBResultType queryFromFetch(
-            const StaticInstPtr inst, PCStateBase &pc,
-            int *p_breg_out, uint64_t *p_version_out);
-
-    //Note: if not taken, will instead
-    //advance pcAddr and return in targetAddr_out
-    PBTBResultType queryFromDecode(
-            const StaticInstPtr inst, Addr pcAddr,
-            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
-
-    // === Squash behavior:
-    // resetToFinalizedMap() // for when we squash from decode
-    // resetToCommittedMap? // for when we are able to handle exceptions
-    //print out
-    void debugDump();
-    // Limits which regs to print (to limit output). Inclusive/exclusive
-    void debugDump(int regstart, int regstop);
-
-
-
-}; // class PrecomputedBTB
 
 class ThreadContext;
 

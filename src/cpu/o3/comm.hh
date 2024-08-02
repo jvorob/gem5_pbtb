@@ -49,6 +49,7 @@
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
+#include "cpu/o3/pbtb.hh"
 #include "sim/faults.hh"
 
 namespace gem5
@@ -143,6 +144,12 @@ struct TimeStruct
 
         unsigned iqCount;
         unsigned ldstqCount;
+
+        // JV PBTB: send back which bmovs executed?
+        // NOTE: should only every have one bmov executing per breg,
+        // since bmovs within a breg are serialized?
+        // Alternatively, could send back a count of executed bmovs per breg?
+        InstSeqNum lastExecBmovSeqNum[PrecomputedBTB::NUM_REGS];
 
         unsigned dispatched;
         bool usedIQ;

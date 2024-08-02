@@ -56,6 +56,7 @@
 #include "debug/Drain.hh"
 #include "debug/IEW.hh"
 #include "debug/O3PipeView.hh"
+#include "debug/PBTB.hh"
 #include "params/BaseO3CPU.hh"
 
 namespace gem5
@@ -272,7 +273,7 @@ IEW::setTimeBuffer(TimeBuffer<TimeStruct> *tb_ptr)
 
     // Setup wire to write information back to previous stages.
     toRename = timeBuffer->getWire(0);
-
+    toDecode = timeBuffer->getWire(0); // JV PBTB
     toFetch = timeBuffer->getWire(0);
 
     // Instruction queue also needs main time buffer.
@@ -1272,9 +1273,25 @@ IEW::executeInsts()
             // If a bmov gets here, we need to squash everything
             // behind it in case precomputed branches were added/removed
             if (inst->isBmov()) {
-                DPRINTF(IEW, "[tid:%i] [sn:%llu] Execute: "
-                        "Bmov detected.\n",
-                    tid, inst->seqNum);
+                const int breg = inst->destRegIdx(0);
+
+                DPRINTF(PBTB, "[tid:%i] [sn:%llu] Executing BMOV: "
+                        "breg=%d. (%s)\n",
+                    tid, inst->seqNum, breg,
+                    inst->staticInst->disassemble(
+                        inst->pcState().instAddr()));
+
+                // NOTE: we should only be able to execute one bmov
+                //       per breg per cycle.
+                assert(toDecode->iewInfo->lastExecBmovSeqNum == 0);
+                //   If we somehow later add the ability to exec multiple
+                //   per cycle, we should make sure lastExecBmovSeqNum
+                //   is the latest executed this cycle, i.e. new bmovs this
+                //   cycle always increase lastExecBmovSeqNum
+                //assert(inst->seqNum > toDecode->iewInfo->lastExecBmovSeqNum);
+
+                // Signal to decode of this execution
+                toDecode->iewInfo->lastExecBmovSeqNum[breg] = inst->seqNum;
 
                 //TODO Originally this was to get bmovs working, but now
                 //we want to only squash in decode due to finalize

@@ -302,9 +302,11 @@ class Decode
     //   ahead have executed
     bool isPBReadyToFinalize(DynInstPtr inst) const;
 
-    //state:
-    InstSeqNum lastDecodedInst; //TODO: remove this once bmov is debugged
-    InstSeqNum lastDecodedBmov;
+    //state (per-breg):
+    InstSeqNum lastDecodedBmov[PrecomputedBTB::NUM_REGS];
+    InstSeqNum lastExecBmovFromIEW[PrecomputedBTB::NUM_REGS];
+    //TODO: remove these last two once bmov is debugged
+    InstSeqNum lastDecodedInst;
     InstSeqNum lastDoneFromCommit;
     // InstSeqNum lastSquashFromCommit; // I dont think im using/need this one?
     // ======= END JV PBTB ADDITIONS

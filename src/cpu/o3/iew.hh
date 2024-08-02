@@ -302,6 +302,9 @@ class IEW
     /** Wire to write information heading to previous stages. */
     TimeBuffer<TimeStruct>::wire toFetch;
 
+    /** JV PBTB: send back info to Decode about completed BMOVs */
+    TimeBuffer<TimeStruct>::wire toDecode;
+
     /** Wire to get commit's output from backwards time buffer. */
     TimeBuffer<TimeStruct>::wire fromCommit;
 

@@ -89,6 +89,6 @@ def operands {{
 # JV PBTB/breg operands
 #   note: not setting these to set isbmov flag
 #   note: as of PBTB spec v0.2: pbal ops keep pb in rs1, other ins rd
-    'BrBmov': BranchRegOp('ud', 'RD', None, 1),
-    'BrPb': BranchRegOp('ud', 'RS1', None, 1),
+    'BrBmov': BranchRegOp('ud', 'RD', None, 0),
+    'BrPb': BranchRegOp('ud', 'RS1', None, 0),
 }};

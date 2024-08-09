@@ -584,6 +584,15 @@ def format BmovJOp(code, *opt_flags) {{
     exec_output = BmovJExecute.subst(iop)
 }};
 
+def format PbalOp(code, *opt_flags) {{
+    iop = InstObjParams(name, Name, 'RegOp', code, opt_flags)
+    header_output = BmovDeclare.subst(iop)
+    decoder_output = BasicConstructor.subst(iop)
+    decode_block = BasicDecode.subst(iop)
+    exec_output = PbalExecute.subst(iop)
+
+}};
+
 
 def template BmovDeclare {{
     //
@@ -694,6 +703,38 @@ def template BmovJExecute {{
         for (const RegId& idx: indices)
             ss << registerName(idx) << ", ";
         ss << std::showbase << std::hex << imm;
+        return ss.str();
+    }
+}};
+
+def template PbalExecute {{
+    Fault
+    %(class_name)s::execute(
+        ExecContext *xc, trace::InstRecord *traceData) const
+    {
+        %(op_decl)s;
+        %(op_rd)s;
+        %(code)s;
+        %(op_wb)s;
+        return NoFault;
+    }
+
+    std::string
+    %(class_name)s::generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const
+    {
+        std::stringstream ss;
+        // pbal is "pbal ra, b1"
+        if(RD != 0) {
+            ss << mnemonic << ' ';
+            ss << registerName(destRegIdx(0)) << ", ";
+
+        } else { // non-linking pbs are "pb b1"
+            ss << "pb " ;
+        }
+
+        // breg
+        ss << registerName(srcRegIdx(0));
         return ss.str();
     }
 }};

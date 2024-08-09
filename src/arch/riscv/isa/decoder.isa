@@ -610,22 +610,15 @@ decode QUADRANT default Unknown::unknown() {
         }
 
 
-        0x1e: BmovROp::pb({{
-            // TODO: make a separate format for this?
-            // For now I think just setting IsControl and not
-            // IsBmov should be sufficient.
-            // Eventually will need to specify breg for fine-grained
-            // bmov stalling
-
-            //IsDirectControl, IsIndirectControl (indirect as in jump to reg)
-            //IsCondControl, IsUncondControl?
-            //Also IsControl
+        0x1e: PbalOp::pbal({{
             Rd = rvSext(NPC);
 
-            Rs1_sd; //need to touch this or else src reg isn't
-            // generated? will crash when trying
-            // to print disassembly.
+            BrPb;
+            // Touch branch reg to mark it as src reg, even though
+            // we don't use it directly
         }}, IsPb, IsControl, IsDirectControl, IsCondControl);
+        //Note, maybe should be IsIndirectControl (indirect as in jump to reg)?
+        //since we can do indirect jumps using `bmovt ..., reg`
 
         0x1d: decode FUNCT3 {
             format BmovIOp {

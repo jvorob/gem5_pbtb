@@ -106,7 +106,7 @@ void PrecomputedBTB::debugDump() { debugDump(0, NUM_REGS); }
 
 void PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
                                  int breg, Addr source_addr) {
-    assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
+    assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
     pmap->source[breg] = source_addr;
     pmap->version[breg]++; //TODO: set this to seqNum instead
 
@@ -117,7 +117,7 @@ void PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
 }
 void PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
                                  int breg, Addr target_addr) {
-    assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
+    assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
     pmap->target[breg] = target_addr;
     pmap->version[breg]++; //TODO: set this to seqNum instead
 
@@ -150,7 +150,7 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
     //TODO: make a new checkpoint every time we set a condition
     //makeNewCheckpoint(seqNum);
 
-    assert(breg > 0 && breg < NUM_REGS); //breg should be 0-31
+    assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
     switch (conditionType) {
         case NoBranch:
         case Taken:
@@ -266,8 +266,9 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
     // NOTE: NoBranch shouldn't be reported as a match
     if (brType == NoBranch) {
         // Only print this in verbose mode, there's gonna be a lot of these
-        DPRINTF(PBTBVerbose, "PBTB QUERIED: (%s): PC:0x%x, MISS\n",
-                debugWhichMap, pcAddr);
+        // ( ok actually turns out there's WAY TOO MANY OF THESE)
+        //DPRINTF(PBTBVerbose, "PBTB QUERIED: (%s): PC:0x%x, MISS\n",
+        //        debugWhichMap, pcAddr);
         *p_breg_out = -1;
         return PR_NoMatch;
     }

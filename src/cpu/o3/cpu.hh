@@ -417,6 +417,11 @@ class CPU : public BaseCPU
     /** The commit stage. */
     Commit commit;
 
+  public:
+    PrecomputedBTB PBTB; // JV PBTB
+
+  protected:
+
     /** The register file. */
     PhysRegFile regFile;
 
@@ -591,9 +596,6 @@ class CPU : public BaseCPU
     // hardware transactional memory
     void htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
                             HtmFailureFaultCause cause) override;
-
-  public:
-    PrecomputedBTB PBTB;
 };
 
 

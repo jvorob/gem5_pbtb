@@ -555,7 +555,7 @@ def format BmovROp(code, *opt_flags) {{
 def format BmovIOp(code, *opt_flags) {{
     regs = ['srcRegIdx(0)', 'srcRegIdx(1)']
     iop = InstObjParams(name, Name, 'ImmOp<int64_t>',
-        {'code': code, 'imm_code': 'imm = IMM12;',
+        {'code': code, 'imm_code': 'imm = sext<12>(IMM12);',
          'regs': ','.join(regs)}, opt_flags)
     header_output = BmovDeclare.subst(iop)
     decoder_output = ImmConstructor.subst(iop)

@@ -1283,7 +1283,7 @@ IEW::executeInsts()
 
                 // NOTE: we should only be able to execute one bmov
                 //       per breg per cycle.
-                assert(toDecode->iewInfo->lastExecBmovSeqNum == 0);
+                assert(toDecode->iewInfo->lastExecBmovSeqNum[breg] == 0);
                 //   If we somehow later add the ability to exec multiple
                 //   per cycle, we should make sure lastExecBmovSeqNum
                 //   is the latest executed this cycle, i.e. new bmovs this

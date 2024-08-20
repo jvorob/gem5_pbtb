@@ -225,7 +225,7 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
     * if a matching breg IS found, sets p_breg_out and p_version_out
     * if a taken branch is found, sets p_targetAddr_out
     * @param pcAddr The pc of branches to look for (source PC)
-    * @param p_breg_out If a breg match is found, will be returned here
+    * @param p_breg_out If a breg match is found, then the breg, else -1
     * @param p_version_out If a breg match is found, version will be here
     * @param p_targetAddr_out If match is a taken branch, tgt addr will be here
     * @return Returns PBTBResultType depending on the kind of match
@@ -374,9 +374,9 @@ void PrecomputedBTB::setCondition(int breg, BranchType conditionType,
 
 
 void PrecomputedBTB::squashFinalizeToFetch() {
-    DPRINTF(PBTB, "PBTB: Overwriting PBTB from finalize\n");
-    // TODO: do both???
-    DPRINTF(Decode, "PBTB: Overwriting PBTB from finalize\n");
+    DPRINTF(PBTB, "PBTB: Overwriting fetch PBTB from finalize\n");
+    // TODO: logging to both debug flags for now??
+    DPRINTF(Decode, "PBTB: Overwriting fetch PBTB from finalize\n");
     //TODO: assert that they're equal barring loop counts / bit counts
     map_fetch = map_final;
 }
@@ -393,12 +393,12 @@ void PrecomputedBTB::squashFinalizeToFetch() {
     * @return Returns PBTBResultType for T, NT, Exhausted, and NoMatch
     */
 PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
-            const StaticInstPtr inst, PCStateBase &pc,
+            const StaticInstPtr inst, PCStateBase &pc_inout,
             int *p_breg_out, uint64_t *p_version_out) {
 
-    Addr tgt = pc.instAddr(); //will be overwritten if taken
+    Addr tgt = pc_inout.instAddr(); //will be overwritten if taken
                               //
-    PBTBResultType res = m_queryPC(&map_fetch, pc.instAddr(),
+    PBTBResultType res = m_queryPC(&map_fetch, pc_inout.instAddr(),
             p_breg_out, p_version_out, &tgt);
 
     // TODO: I'm not sure how to deal with PCStateBases: this tempAddr
@@ -409,12 +409,12 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
     // Old code: auto target=std::make_unique<GenericISA::SimplePCState<4>>();
 
     // ==== Prediction made: return to caller
-    // Return next-fetched PC through pc arg
+    // Return next-fetched PC through pc_inout arg
     if (res == PR_Taken){
         tempAddr.set(tgt);
-        set(pc, tempAddr);
+        set(pc_inout, tempAddr);
     } else { //Else: no match, OR match found but not taken
-        inst->advancePC(pc);
+        inst->advancePC(pc_inout);
     }
 
     return res;
@@ -442,10 +442,6 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
 
     return res;
 }
-
-//????
-//bool PrecomputedBTB::finalizePB() {
-//}
 
 
 // ==============================================================

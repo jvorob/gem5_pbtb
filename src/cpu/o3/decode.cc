@@ -254,8 +254,9 @@ Decode::checkStall(ThreadID tid) const
              && !inst->isSquashed()
              && !isPBReadyToFinalize(inst) )
         {
-            DPRINTF(Decode,"[tid:%i] Stalling for pb finalize "
-                           "(in checkStall)\n", tid);
+            DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
+                           "(in checkStall)\n",
+                    inst->seqNum, tid);
             ret_val = true;
         }
     }
@@ -280,9 +281,10 @@ bool Decode::isPBReadyToFinalize(DynInstPtr inst) const {
 
     const int breg = inst->staticInst->srcRegIdx(0);
 
-    DPRINTF(Decode,"[tid:X] isPBReadyToFinalize: pb b%d, "
+    DPRINTF(Decode,"[tid:X] isPBReadyToFinalize: [sn:%d] pb b%d, "
             "lastDecoded=%d, "
             "lastBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
+            inst->seqNum,
             breg, lastDecodedInst,
             breg, lastDecodedBmov[breg],
             breg, lastExecBmovFromIEW[breg]);
@@ -859,7 +861,9 @@ Decode::decodeInsts(ThreadID tid)
                 // && !inst->isSquashed() // Not needed: isSquashed check above
                 && !isPBReadyToFinalize(inst))
         {
-            DPRINTF(Decode,"[tid:%i] Stalling for pb finalize\n", tid);
+            DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
+                            " (in decodeInsts)\n",
+                    inst->seqNum, tid);
             //DPRINTF(Decode,"[tid:%i] Stalling inst %d, readPredBTBreg:%d, "
             //               "isControl:%d, isBmov:%d\n",
             //    inst->seqNum, inst->readPredBTBReg(),
@@ -894,11 +898,12 @@ Decode::decodeInsts(ThreadID tid)
         if (inst->isBmov()) {
             const int breg = inst->destRegIdx(0);
 
-            DPRINTF(Decode, "[tid:%i] [sn:%llu] BMOV Tracking: finalizing "
-                    "breg=%d. (%s)\n",
-                tid, inst->seqNum, breg,
+            DPRINTF(Decode, "[tid:%i] [sn:%llu] BMOV Tracking: decoded "
+                    "(%s) breg=%d\n",
+                tid, inst->seqNum,
                 inst->staticInst->disassemble(
-                    inst->pcState().instAddr()));
+                    inst->pcState().instAddr()),
+                breg);
 
             // sanity check, we should never be re-decoding an earlier bmov?
             // (even if we squash, seq nums should increase)

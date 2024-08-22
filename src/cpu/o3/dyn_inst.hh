@@ -533,13 +533,13 @@ class DynInst : public ExecContext, public RefCounted
 
     // === TODO JV: PBTB prediction info
     void setPredBTBReg(int breg) { predBTBReg = breg; }
-    int readPredBTBReg()         { return predBTBReg; }
+    int readPredBTBReg() const   { return predBTBReg; }
 
     void setPredBTBVersion(InstSeqNum vers) { predBTBVersion = vers; }
-    InstSeqNum readPredBTBVersion()         { return predBTBVersion; }
+    InstSeqNum readPredBTBVersion() const   { return predBTBVersion; }
 
     void setPredBTBExhausted(bool exh) { predBTBExhausted = exh; }
-    bool readPredBTBExhausted()        { return predBTBExhausted; }
+    bool readPredBTBExhausted() const  { return predBTBExhausted; }
     // ==== END PBTB prediction info
 
 

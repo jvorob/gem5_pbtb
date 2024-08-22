@@ -113,15 +113,8 @@ Decode::resetStage()
     }
 
 
-    // TODO JV: Is this necessary? is this the right place for it?
-    lastDecodedInst      = 0;
-    lastDoneFromCommit   = 0;
-    //lastDecodedBmov      = 0;
-    for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
-        lastExecBmovFromIEW[i] = 0;
-        lastDecodedBmov[i] = 0;
-    }
-    //lastSquashFromCommit = 0;
+    // JV PBTB
+    cpu->PBTB.tracker.reset();
 }
 
 std::string
@@ -250,10 +243,8 @@ Decode::checkStall(ThreadID tid) const
 
         // WARNING: This check is duplicated in Decode::decodeInsts(...)
         // MAKE SURE BOTH HAVE THE SAME LOGIC
-        if ( (inst->isPb() || inst->readPredBTBReg() >= 0)
-             && !inst->isSquashed()
-             && !isPBReadyToFinalize(inst) )
-        {
+
+        if (cpu->PBTB.tracker.instNeedsToStall(tid, inst)) {
             DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
                            "(in checkStall)\n",
                     inst->seqNum, tid);
@@ -272,36 +263,6 @@ Decode::fetchInstsValid()
 {
     return fromFetch->size > 0;
 }
-
-// =============== JV PBTB FUNCS
-
-bool Decode::isPBReadyToFinalize(DynInstPtr inst) const {
-    // We should only run this check for pbs
-    assert(inst->isPb());
-
-    const int breg = inst->staticInst->srcRegIdx(0);
-
-    DPRINTF(Decode,"[tid:X] isPBReadyToFinalize: [sn:%d] pb b%d, "
-            "lastDecoded=%d, "
-            "lastBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
-            inst->seqNum,
-            breg, lastDecodedInst,
-            breg, lastDecodedBmov[breg],
-            breg, lastExecBmovFromIEW[breg]);
-
-    //if (lastDoneFromCommit >= lastDecodedInst) {
-    //if (lastDoneFromCommit >= lastDecodedBmov) {
-
-    // For the given breg: make sure all bmovs have executed
-    if (lastExecBmovFromIEW[breg] >= lastDecodedBmov[breg]) {
-        return true;
-    }
-
-    return false;
-    //TODO v1: assert isControl, check if last decoded op has committed
-    //TODO v2: track last executed bmov? check stalls? ???
-}
-// =============== END JV PBTB FUNCS
 
 bool
 Decode::block(ThreadID tid)
@@ -591,102 +552,31 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
     //                    fromCommit->commitInfo[tid].doneSeqNum);
 
 
+    // Record bmov completions from IEW
     for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
         const InstSeqNum newNum = fromIEW->iewInfo->lastExecBmovSeqNum[i];
         if (newNum != 0) {
-            DPRINTF(Decode, "[tid:%i] BMOV Tracking: bmov b%d done "
-                " from iew: [sn%d]\n", tid, i, newNum);
-
-            // NOTE: these should be only increasing, since bmovs for the
-            // same branch reg are executed serially
-            assert( newNum > lastExecBmovFromIEW[i] );
-            lastExecBmovFromIEW[i] = newNum;
+            cpu->PBTB.tracker.recordExecBmovFromIew(tid, newNum, i);
         }
     }
-
-    // ==== TODO JV PBTB: keep track of committed info
-    //                    for pb tracking
-    // ===== OLD BMOV TRACKING:
     // If we committed this cycle then doneSeqNum will be > 0
-    //if (fromCommit->commitInfo[tid].doneSeqNum != 0 &&
-    //    !fromCommit->commitInfo[tid].squash) {
-
-    //    InstSeqNum newNum = fromCommit->commitInfo[tid].doneSeqNum;
-    //    DPRINTF(Decode, "[tid:%i] BMOV Tracking: new done inst"
-    //            " from commit: [sn%d]\n", tid, newNum);
-    //    assert(newNum >= lastDoneFromCommit);
-    //    lastDoneFromCommit = newNum;
-    //}
+    if (fromCommit->commitInfo[tid].doneSeqNum != 0 &&
+        !fromCommit->commitInfo[tid].squash) {
+        cpu->PBTB.tracker.recordCommit(tid,
+                fromCommit->commitInfo[tid].doneSeqNum);
+    }
 
     // Check squash signals from commit.
     if (fromCommit->commitInfo[tid].squash) {
-        InstSeqNum squashNum = fromCommit->commitInfo[tid].doneSeqNum;
         // everything with seq>squashNum is gone
-
+        InstSeqNum squashNum = fromCommit->commitInfo[tid].doneSeqNum;
         DPRINTF(Decode, "[tid:%i] Squashing instructions due to squash "
                 "from commit [sn:%lld] .\n", tid, squashNum);
 
-
-        for (int bi = 0; bi < PrecomputedBTB::NUM_REGS; bi++) {
-            // young insts (high seqnum) are squashed away
-
-            // If we don't have any insts, don't worry about it
-            if (lastDecodedBmov[bi] == 0) { continue; }
-
-            DPRINTF(Decode, "[tid:%i] BMOV Tracking: Squash@%d "
-                    " b%d: lastDecode=%d, lastDone=%d.\n",
-                    tid, squashNum,
-                    bi, lastDecodedBmov[bi], lastExecBmovFromIEW[bi]);
-
-            // If all our insts are old (low seqnum), they're not affected
-            if (lastDecodedBmov[bi] <= squashNum) { continue; }
-
-
-            // Else, we have some insts that got squashed!
-            // If all of them were already executed, we might be ok
-            if (lastDecodedBmov[bi] <= lastExecBmovFromIEW[bi]) { continue; }
-
-            // ELSE: we've squashed partially-executed bmovs, we can't
-            // handle that
-            panic("PBTB ERROR: squash from commit squashed unfinished bmovs");
-        }
-
-
-        // ===== OLD BMOV TRACKING:
-        // //TODO JV PBTB: also track squash nums?
-        // InstSeqNum squashSeqNum = fromCommit->commitInfo[tid].doneSeqNum;
-        // // everything with seq>squashSeqNum is gone
-
-        // DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
-        //         "squash@%d, lastCommited=%d."
-        //         " Moving lastDecoded up to squash\n",
-        //         tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
-
-        // // We've squashed some in-flight instructions, so we no longer
-        // // need to wait for lastDecodedInst, just the last non-squashed inst
-        // assert(squashSeqNum >= lastDoneFromCommit); // sanity check?
-
-        // if (lastDecodedInst > squashSeqNum) {
-        //     DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
-        //             "squash@%d, lastCommited=%d."
-        //             " Moving lastDecoded up to squash\n",
-        //             tid, lastDecodedInst,
-        //             squashSeqNum, lastDoneFromCommit);
-        //     lastDecodedInst = squashSeqNum;
-        //     //TODO: once we track specifically the last bmov, it'll be
-        //     // a little trickier to do
-
-        // }
-        // if (lastDecodedBmov > squashSeqNum) {
-        //     DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastBmov=%d, "
-        //             "squash@%d, lastCommited=%d."
-        //             " Moving lastBmov up to squash\n",
-        //             tid, lastDecodedBmov,
-        //             squashSeqNum, lastDoneFromCommit);
-        //     lastDecodedBmov = squashSeqNum;
-        // }
-        // //(fromCommit->commitInfo[tid].doneSeqNum, tid);
-        // //lastSquashFromCommit = newSquashNum;
+        //JV PBTB: record committed inst and/or sanity check to make sure
+        //         we haven't squashed in an illegal way
+        //         TODO: handle undo/rollback?
+        cpu->PBTB.tracker.recordSquashFromAhead(tid, squashNum);
 
         squash(tid);
 
@@ -855,15 +745,11 @@ Decode::decodeInsts(ThreadID tid)
 
         // If it's a pb or it was predicted as a pb, need to
         // make sure we're ready to finalize it
-        // WARNING: this check is duplicated in Decode::checkStall()
-        // MAKE SURE BOTH HAVE THE SAME LOGIC
-        if ( (inst->isPb() || inst->readPredBTBReg() >= 0)
-                // && !inst->isSquashed() // Not needed: isSquashed check above
-                && !isPBReadyToFinalize(inst))
-        {
+        if (cpu->PBTB.tracker.instNeedsToStall(tid, inst)) {
             DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
                             " (in decodeInsts)\n",
                     inst->seqNum, tid);
+
             //DPRINTF(Decode,"[tid:%i] Stalling inst %d, readPredBTBreg:%d, "
             //               "isControl:%d, isBmov:%d\n",
             //    inst->seqNum, inst->readPredBTBReg(),
@@ -891,25 +777,8 @@ Decode::decodeInsts(ThreadID tid)
 
 
         // ==== TODO JV PBTB: count this as decoded
-        // TODO: make this only count bmovs
-        // Note: we know it's not squashed at this point)
-        assert(inst->seqNum > lastDecodedInst);
-        lastDecodedInst = inst->seqNum;
-        if (inst->isBmov()) {
-            const int breg = inst->destRegIdx(0);
-
-            DPRINTF(Decode, "[tid:%i] [sn:%llu] BMOV Tracking: decoded "
-                    "(%s) breg=%d\n",
-                tid, inst->seqNum,
-                inst->staticInst->disassemble(
-                    inst->pcState().instAddr()),
-                breg);
-
-            // sanity check, we should never be re-decoding an earlier bmov?
-            // (even if we squash, seq nums should increase)
-            assert(inst->seqNum > lastDecodedBmov[breg]);
-            lastDecodedBmov[breg] = inst->seqNum;
-        }
+        // ( Note: we know it's not squashed at this point)
+        cpu->PBTB.tracker.recordDecodeInst(tid, inst);
 
         ++(toRename->size);
         ++toRenameIndex;

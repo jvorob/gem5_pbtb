@@ -11,7 +11,9 @@
 #include "cpu/o3/pbtb.hh" // Technically cpu.hh includes this already?
 
 #include "base/trace.hh"
+#include "cpu/inst_seq.hh"
 #include "cpu/o3/cpu.hh"
+#include "cpu/o3/dyn_inst.hh"
 #include "debug/Decode.hh" //JV TODO DEBUG TEMP
 #include "debug/PBTB.hh"
 #include "debug/PBTBVerbose.hh"
@@ -43,6 +45,196 @@ const std::string debugPrintBottomBits(uint64_t bits, int n) {
     }
     debug_bit_buff[i] = '\0';
     return std::string { debug_bit_buff };
+}
+
+// ==============================================================
+//
+//                        JV Bmov Tracker
+//
+// ==============================================================
+
+void BmovTracker::reset() {
+    lastCommittedInst   = 0;
+
+    for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
+        lastExecBmov[i] = 0;
+        lastDecBmov[i] = 0;
+        lastDecNonbitBmov[i] = 0;
+    }
+
+    lastDecAny      = 0;
+    lastDecPb = 0;
+    lastDecMutPb = 0;
+}
+
+// ======== tracking functions ( should be called from Decode)
+
+void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
+    // DPRINTF(Decode, "[tid:%i] [sn:%llu] BmovTracker: recordDecode\n",
+    //     tid, inst->seqNum);
+
+    // sanity check: decode should be in-order
+    assert(inst->seqNum > lastDecAny);
+    lastDecAny = inst->seqNum;
+
+    if (inst->isBmov()) {
+        const int breg = inst->destRegIdx(0);
+
+        DPRINTF(Decode, "[tid:%i] [sn:%llu] BmovTracker: decoded "
+                "(%s) breg=%d\n",
+            tid, inst->seqNum,
+            inst->staticInst->disassemble(
+                inst->pcState().instAddr()),
+            breg);
+
+        // sanity check, we should never be re-decoding an earlier bmov?
+        // (even if we squash, seq nums should increase)
+        assert(inst->seqNum > lastDecBmov[breg]);
+        assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+        lastDecBmov[breg] = inst->seqNum;
+    }
+}
+
+void BmovTracker::recordExecBmovFromIew(ThreadID tid,
+        InstSeqNum bmovSeq, int breg ) {
+    DPRINTF(Decode, "[tid:%i] BmovTracker: bmov b%d done "
+        " from iew: [sn%d]\n", tid, breg, bmovSeq);
+
+    // NOTE: these should always be increasing, since bmovs for the
+    // same branch reg are executed serially
+    assert( bmovSeq > lastExecBmov[breg] );
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+    lastExecBmov[breg] = bmovSeq;
+}
+
+void BmovTracker::recordCommit(ThreadID tid,
+         InstSeqNum instSeqNum ) {
+    DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordCommit "
+        "NOT IMPLEMENTED\n", tid, instSeqNum);
+
+    //assert(newNum >= lastDoneFromCommit);
+    //lastDoneFromCommit = newNum;
+}
+
+// Note: this doesn't count squashes the Decode itself generates,
+// only squashed from ahead of it, e.g. from IEW or commit
+void BmovTracker::recordSquashFromAhead(ThreadID tid,
+         InstSeqNum squashNum) {
+    // everything with seq>squashNum is gone
+    DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordingSquash\n",
+        tid, squashNum);
+
+    //TODO: this is unfinished
+
+    for (int bi = 0; bi < PrecomputedBTB::NUM_REGS; bi++) {
+        // young insts (high seqnum) are squashed away
+
+        // If we don't have any insts, don't worry about it
+        if (lastDecBmov[bi] == 0) { continue; }
+
+        DPRINTF(Decode, "[tid:%i] BmovTracker: Squash@%d "
+                " b%d: lastDecode=%d, lastDone=%d.\n",
+                tid, squashNum,
+                bi, lastDecBmov[bi], lastExecBmov[bi]);
+
+        // If all our insts are old (low seqnum), they're not affected
+        if (lastDecBmov[bi] <= squashNum) { continue; }
+
+
+        // Else, we have some insts that got squashed!
+        // If all of them were already executed, we might be ok
+        if (lastDecBmov[bi] <= lastExecBmov[bi]) { continue; }
+
+        // ELSE: we've squashed partially-executed bmovs, we can't
+        // handle that
+        panic("PBTB ERROR: squash from commit squashed unfinished bmovs");
+    }
+}
+
+        // ===== OLD BMOV TRACKING:
+        // //TODO JV PBTB: also track squash nums?
+        // InstSeqNum squashSeqNum = fromCommit->commitInfo[tid].doneSeqNum;
+        // // everything with seq>squashSeqNum is gone
+
+        // DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
+        //         "squash@%d, lastCommited=%d."
+        //         " Moving lastDecoded up to squash\n",
+        //         tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
+
+        // // We've squashed some in-flight instructions, so we no longer
+        // // need to wait for lastDecodedInst, just the last non-squashed inst
+        // assert(squashSeqNum >= lastDoneFromCommit); // sanity check?
+
+        // if (lastDecodedInst > squashSeqNum) {
+        //     DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
+        //             "squash@%d, lastCommited=%d."
+        //             " Moving lastDecoded up to squash\n",
+        //             tid, lastDecodedInst,
+        //             squashSeqNum, lastDoneFromCommit);
+        //     lastDecodedInst = squashSeqNum;
+        //     //TODO: once we track specifically the last bmov, it'll be
+        //     // a little trickier to do
+
+        // }
+        // if (lastDecodedBmov > squashSeqNum) {
+        //     DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastBmov=%d, "
+        //             "squash@%d, lastCommited=%d."
+        //             " Moving lastBmov up to squash\n",
+        //             tid, lastDecodedBmov,
+        //             squashSeqNum, lastDoneFromCommit);
+        //     lastDecodedBmov = squashSeqNum;
+        // }
+        // //(fromCommit->commitInfo[tid].doneSeqNum, tid);
+        // //lastSquashFromCommit = newSquashNum;
+
+// ============ Query Functions
+// if is pb or predicted-as-pb, need to stall for finalize
+bool BmovTracker::instNeedsToStall(ThreadID tid,
+        DynInstConstPtr inst) const {
+
+    if (inst->isSquashed())
+        { return false; }
+
+    if (!inst->isPb() && inst->readPredBTBReg() < 0)
+        { return false; }
+
+
+    if (!inst->isPb()) {
+        panic("BmovTracker::instNeedsToStall: NOT IMPLEMENTED FOR NON-PB OPs "
+              " THAT WERE MISPREDICTED AS PBS");
+        // TODO: need to reason about which breg to checkk
+        //TODO: TRICKY QUESTION HERE: if predBreg != actBreg,
+        //      do we stall for both?
+        //int predBreg = inst->readPredBTBReg();
+        //int actBreg = -1;
+        //if (inst->isPb() ) {
+        //    actBreg = inst->staticInst->srcRegIdx(0);
+        //}
+    }
+
+    int breg = inst->staticInst->srcRegIdx(0);
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+
+
+    DPRINTF(Decode,"[tid:X] BmovTracker::instNeedsToStall [sn:%d] breg=%d, "
+            "lastDecAny=%d, "
+            "lastBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
+            inst->seqNum,
+            breg, lastDecAny,
+            breg, lastDecBmov[breg],
+            breg, lastExecBmov[breg]);
+    //if (lastDoneFromCommit >= lastDecodedInst) {
+
+    //if (lastDoneFromCommit >= lastDecodedBmov) {
+
+    // For the given breg: make sure all bmovs have executed
+    if (lastExecBmov[breg] >= lastDecBmov[breg]) {
+        return false;
+    } else {
+        return true; // unexecuted bmovs, stall
+    }
+
+    //TODO v1: assert isControl, check if last decoded op has committed
 }
 
 // ==============================================================

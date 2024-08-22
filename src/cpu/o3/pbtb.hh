@@ -11,9 +11,14 @@
 #ifndef __CPU_O3_PBTB_HH__
 #define __CPU_O3_PBTB_HH__
 
+#include <cassert>
 
 #include "arch/generic/pcstate.hh"
+#include "cpu/inst_seq.hh"
+#include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/static_inst.hh"
+
+const int NUM_PBTB_REGS=32;
 
 namespace gem5
 {
@@ -22,6 +27,56 @@ namespace o3
 {
 
   class CPU; // forward declare? Need for getting ptr to cpu
+
+
+// ==============================================================
+//
+//                    JV Bmov tracker
+//
+// ==============================================================
+
+/**
+ * One component of the PBTB? This keeps track of inflight bmovs, bmov
+ *  completions, squashes etc.
+ *
+ * This primarily needs to interact with decode?
+ * as that's when pb stalls happen?
+ */
+class BmovTracker
+{
+  private:
+    InstSeqNum lastCommittedInst = 0;
+
+    // per-breg
+    InstSeqNum lastExecBmov      [NUM_PBTB_REGS] = {};
+    InstSeqNum lastDecBmov       [NUM_PBTB_REGS] = {};
+    InstSeqNum lastDecNonbitBmov [NUM_PBTB_REGS] = {};
+
+    // misc?
+    InstSeqNum lastDecAny = 0;
+    InstSeqNum lastDecPb = 0;
+    InstSeqNum lastDecMutPb = 0;
+
+
+  public:
+    void reset(); //clear out all state
+
+
+    // ============ tracking functions ( should be set in appropriate places
+    void recordDecodeInst       (ThreadID tid, DynInstConstPtr inst);
+    void recordExecBmovFromIew  (ThreadID tid, InstSeqNum bmovSeq, int breg);
+    void recordCommit           (ThreadID tid, InstSeqNum commitSeq);
+
+    // Note: this doesn't count squashes the Decode itself generates,
+    // only squashed from ahead of it, e.g. from IEW or commit
+    void recordSquashFromAhead (ThreadID tid, InstSeqNum squashSeq);
+
+    // ============ Query Functions
+    // if is pb or predicted-as-pb, need to stall for finalize
+    bool instNeedsToStall(ThreadID tid, DynInstConstPtr inst) const;
+};
+
+
 
 // ==============================================================
 //
@@ -67,7 +122,7 @@ class PrecomputedBTB
     const static char* BranchTypeCodes[];
     const static char* BranchTypeStrs[];
 
-    const static int NUM_REGS = 32;
+    const static int NUM_REGS = NUM_PBTB_REGS;
     //const static int MAX_CHECKPOINTS = 32;
 
 
@@ -77,12 +132,15 @@ class PrecomputedBTB
     /** Returns the name of PBTB (for DPRINTF?) */
     std::string name() const;
 
+    // Maybe not the best place for it, but it's nice to have
 
   private:
-
     /** CPU Interface */
     CPU *cpu;
 
+  public:
+    BmovTracker tracker;
+  private:
     // ================================================================
     //
     //                         PBTB MAPS

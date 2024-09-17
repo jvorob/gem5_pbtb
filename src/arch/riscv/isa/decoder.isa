@@ -551,42 +551,42 @@ decode QUADRANT default Unknown::unknown() {
                             1);
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
                 0x1: bmovc_bne({{
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) != rvSext(Rs2) ? 1:0,
                             1);
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
                 0x4: bmovc_blt({{
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) < rvSext(Rs2) ? 1:0,
                             1);
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
                 0x5: bmovc_bge({{
                     xc->setPBTB(6, RD,
                             rvSext(Rs1) >= rvSext(Rs2) ? 1:0,
                             1);
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
                 0x6: bmovc_bltu({{
                     xc->setPBTB(6, RD,
                             rvZext(Rs1) < rvZext(Rs2) ? 1:0,
                             1);
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
                 0x7: bmovc_bgeu({{
                     xc->setPBTB(6, RD,
                             rvZext(Rs1) >= rvZext(Rs2) ? 1:0,
                             1);
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
             }
         }
 
@@ -629,7 +629,7 @@ decode QUADRANT default Unknown::unknown() {
                     xc->setPBTB(6, RD, rvZext(Rs1_sd), rvSext(imm));
                     BrBmov = BrBmov+1;
                     // Set bmov register so dep-tracking sees it
-                }}, IsBmov);
+                }}, IsBmov, IsBitBmov);
                 0x4: bmovc_loop({{
                     //set condition to loop(rs1+imm)
                     //xc->setPBTB(5, RD, rvSext(Rs1_sd + imm));

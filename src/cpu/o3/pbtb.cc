@@ -59,7 +59,7 @@ void BmovTracker::reset() {
     for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
         lastExecBmov[i] = 0;
         lastDecBmov[i] = 0;
-        lastDecNonbitBmov[i] = 0;
+        lastDecNonBitBmov[i] = 0;
     }
 
     lastDecAny      = 0;
@@ -79,19 +79,26 @@ void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
 
     if (inst->isBmov()) {
         const int breg = inst->destRegIdx(0);
+        const bool nonbit = !inst->isBitBmov();
 
         DPRINTF(Decode, "[tid:%i] [sn:%llu] BmovTracker: decoded "
-                "(%s) breg=%d\n",
+                "(%s) breg=%d %s\n",
             tid, inst->seqNum,
             inst->staticInst->disassemble(
                 inst->pcState().instAddr()),
-            breg);
+            breg,
+            nonbit ? "" : ", bit-bmov");
 
         // sanity check, we should never be re-decoding an earlier bmov?
         // (even if we squash, seq nums should increase)
         assert(inst->seqNum > lastDecBmov[breg]);
         assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
         lastDecBmov[breg] = inst->seqNum;
+
+        if (nonbit) {
+            assert(inst->seqNum > lastDecNonBitBmov[breg]);
+            lastDecNonBitBmov[breg] = inst->seqNum;
+        }
     }
 }
 
@@ -218,23 +225,31 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
 
     DPRINTF(Decode,"[tid:X] BmovTracker::instNeedsToStall [sn:%d] breg=%d, "
             "lastDecAny=%d, "
-            "lastBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
+            "lastBmov[b%d]=%d, lastNBBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
             inst->seqNum,
             breg, lastDecAny,
             breg, lastDecBmov[breg],
+            breg, lastDecNonBitBmov[breg],
             breg, lastExecBmov[breg]);
-    //if (lastDoneFromCommit >= lastDecodedInst) {
-
-    //if (lastDoneFromCommit >= lastDecodedBmov) {
 
     // For the given breg: make sure all bmovs have executed
     if (lastExecBmov[breg] >= lastDecBmov[breg]) {
         return false;
+
+    // Else: some bmovs in flight, but they are all bit-type,
+    //       so we might be safe to read under the in-flight bmovs
+    } else if (lastExecBmov[breg] >= lastDecNonBitBmov[breg]) {
+        // Breg must ALREADY be bit-type, else the first bit-type bmov
+        //   will clear the reg, so reading-under would be incorrect.
+        // Breg must also not be exhausted, i.e. there must be at least
+        //   one bit buffered for us to read.
+
+        // Stall if either condition fails
+        return ! (this->pbtb->isBregBitTypeAndReady(breg));
     } else {
         return true; // unexecuted bmovs, stall
     }
 
-    //TODO v1: assert isControl, check if last decoded op has committed
 }
 
 // ==============================================================
@@ -243,9 +258,6 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
 //
 // ==============================================================
 //
-
-PrecomputedBTB::PrecomputedBTB(CPU *_cpu) : cpu(_cpu)
-{}
 
 std::string PrecomputedBTB::name() const {
     return cpu->name() + ".pbtb";
@@ -406,7 +418,7 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
             break;
         case ShiftBit_Clear:
         default:
-            panic("Unrecognized conditiontype in PBTB");
+            panic("Unrecognized condition-type in PBTB");
             break;
     }
 }
@@ -635,6 +647,19 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
     return res;
 }
 
+// ==============================================================
+// Checks if breg is ready to finalize a bit-type branch
+// TODO: this is very specific to what's needed for
+//       BmovTracker::instNeedsToStall, might be useful later to break it up
+//       into a `isBregReady` and a `getBregType`
+bool PrecomputedBTB::isBregBitTypeAndReady(int breg) const {
+    // breg must already be bit-type, and must not be exhausted
+    if (map_final.cond_type[breg] == PrecomputedBTB::BranchType::ShiftBit
+        && map_final.cond_aux_val[breg] > 0) {
+        return true;
+    }
+    return false;
+}
 
 // ==============================================================
 

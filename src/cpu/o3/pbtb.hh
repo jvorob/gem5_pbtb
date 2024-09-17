@@ -34,6 +34,7 @@ namespace o3
 //                    JV Bmov tracker
 //
 // ==============================================================
+class PrecomputedBTB;
 
 /**
  * One component of the PBTB? This keeps track of inflight bmovs, bmov
@@ -44,13 +45,18 @@ namespace o3
  */
 class BmovTracker
 {
+  public:
+    BmovTracker(const PrecomputedBTB *pbtb): pbtb(pbtb) {}
+
   private:
+    const PrecomputedBTB *pbtb;
+
     InstSeqNum lastCommittedInst = 0;
 
     // per-breg
     InstSeqNum lastExecBmov      [NUM_PBTB_REGS] = {};
     InstSeqNum lastDecBmov       [NUM_PBTB_REGS] = {};
-    InstSeqNum lastDecNonbitBmov [NUM_PBTB_REGS] = {};
+    InstSeqNum lastDecNonBitBmov [NUM_PBTB_REGS] = {};
 
     // misc?
     InstSeqNum lastDecAny = 0;
@@ -127,7 +133,8 @@ class PrecomputedBTB
 
 
   public:
-    PrecomputedBTB(CPU *_cpu);
+    PrecomputedBTB(CPU *_cpu): cpu(_cpu), tracker(this) {}
+
 
     /** Returns the name of PBTB (for DPRINTF?) */
     std::string name() const;
@@ -223,6 +230,10 @@ class PrecomputedBTB
     PBTBResultType queryFromDecode(
             const StaticInstPtr inst, Addr pcAddr,
             int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
+
+
+    // Checks if breg is ready to finalize a bit-type branch
+    bool isBregBitTypeAndReady(int breg) const;
 
     // === Squash behavior:
     // resetToFinalizedMap() // for when we squash from decode

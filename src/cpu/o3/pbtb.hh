@@ -26,7 +26,7 @@ namespace gem5
 namespace o3
 {
 
-  class CPU; // forward declare? Need for getting ptr to cpu
+class CPU; // forward declare? Need for getting ptr to cpu
 
 
 // ==============================================================
@@ -194,12 +194,35 @@ class PrecomputedBTB
     void m_setCondition(struct pbtb_map *pmap, int breg,
             BranchType conditionType, uint64_t val, int64_t n);
 
-    // Queries a pmap (consuming bits in the process)
-    // returns a resultType describing whether a match was found and what kind
-    // If a match is found, sets p_breg_out, p_version_out
-    // If the match is a taken branch, sets p_targetAddr_out
-    PBTBResultType m_queryPC(struct pbtb_map *pmap, Addr pcAddr,
-            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
+
+    // Returns the index of the first nonempty breg matching PC,
+    // or -1 if none found
+    int m_findMatchingBreg(const struct pbtb_map *pmap, Addr pcAddr) const;
+
+
+    /**
+     * Returns the outcome of a pb op if it queried the given pmap.
+     * NOTE: This does not actually modify the pbtb, MUST ALSO CALL
+     *       m_consumeIter(breg) to actually consume that iteration.
+     * version / targetAddr_out will be written only if match found
+     * @param pcAddr The pc of branches to look for (source PC)
+     * @param p_breg_out If a breg match is found, then the breg, else -1
+     * @param p_version_out If a breg match is found, version will be here
+     * @param p_targetAddr_out If match is a tkn branch, tgt addr will be here
+     * @return Returns PBTBResultType depending on the kind of match
+     */
+    PBTBResultType m_queryPC(const struct pbtb_map *pmap, Addr pcAddr,
+            int *p_breg_out,
+            uint64_t *p_version_out,
+            Addr *p_targetAddr_out) const;
+
+    //  A pb queries the PBTB, but also modifies it (conditonal or
+    //  loop branches will have different behavior each time a pb goes through)
+    //  This function does the modification, consuming one bit from a specified
+    //  breg. If breg is empty/invalid(-1)/exhausted, does nothing
+    //  TODO: make this return a result? how many iters consumed?
+    //  TODO: make this a more general clear method?
+    void m_consumeIter(struct pbtb_map *pmap, int breg);
 
   public:
     // ================== External-interface functions

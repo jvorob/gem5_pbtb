@@ -423,20 +423,23 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
     }
 }
 
-/**
-    * Queries the given pmap for pcAddr,
-    * returns the appropriate resultType
-    * if a matching breg IS found, sets p_breg_out and p_version_out
-    * if a taken branch is found, sets p_targetAddr_out
-    * @param pcAddr The pc of branches to look for (source PC)
-    * @param p_breg_out If a breg match is found, then the breg, else -1
-    * @param p_version_out If a breg match is found, version will be here
-    * @param p_targetAddr_out If match is a taken branch, tgt addr will be here
-    * @return Returns PBTBResultType depending on the kind of match
-    */
+int PrecomputedBTB::m_findMatchingBreg(const struct pbtb_map *pmap,
+                                       Addr pcAddr) const {
+    // Check each breg, return first valid one matching PC
+    int breg = -1;
+    for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
+        if (pmap->source[i] == pcAddr && pmap->cond_type[i] != NoBranch) {
+            breg = i;
+            break;
+        }
+    }
+    return breg;
+}
+
 PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
-            struct pbtb_map *pmap, Addr pcAddr,
-            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
+            const struct pbtb_map *pmap, Addr pcAddr,
+            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out
+) const {
 
     // Queries pbtbp for pcAddr
     // if no match, returns PR_NoMatch
@@ -447,8 +450,6 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
     //     else:
     //        returns PR_NotTaken or PR_Exhausted
 
-    int breg = -1; // If found, match will go here
-    BranchType brType = NoBranch; // If match found, type will go here
     // Note: bregs in the map can be set to NoBranch, but we should never
     //       match against those (i.e. they're invalid, so this works fine)
     PBTBResultType resType;
@@ -457,18 +458,9 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
     if (pmap == &map_fetch) { debugWhichMap = "F"; }
     if (pmap == &map_final) { debugWhichMap = "D"; }
 
-    // ==== Loop to find first breg matching the source addr
-    for (int i = 0; i < NUM_REGS; i++) {
-        if (pmap->source[i] == pcAddr) {
-            //Found a match!
-            breg = i;
-            brType = pmap->cond_type[i];
-            break;
-        }
-    }
-
-    // NOTE: NoBranch shouldn't be reported as a match
-    if (brType == NoBranch) {
+    // ==== Find matching breg, early return
+    int breg = m_findMatchingBreg(pmap, pcAddr);
+    if (breg < 0) {
         // Only print this in verbose mode, there's gonna be a lot of these
         // ( ok actually turns out there's WAY TOO MANY OF THESE)
         //DPRINTF(PBTBVerbose, "PBTB QUERIED: (%s): PC:0x%x, MISS\n",
@@ -476,10 +468,12 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
         *p_breg_out = -1;
         return PR_NoMatch;
     }
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+
+    BranchType brType = pmap->cond_type[breg];
+    assert(brType != NoBranch);
 
     // ==== Check based on branch type whether or not it's taken
-    // NOTE: breg might be -1, only guaranteed for breg to be valid
-    //       if type != NoBranch
     if (brType == Taken) {
         resType = PR_Taken;
 
@@ -492,19 +486,11 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
                 pmap->cond_val[breg]>0 ? "T" : "NT",
                 pcAddr, pmap->target[breg]);
 
-        //CONSUMED A LOOP ITERATION (debug output?)
-
-        if (pmap->cond_val[breg] > 0) {
-            resType = PR_Taken;
-            pmap->cond_val[breg]--;
-        } else if (pmap->cond_val[breg] == 0) {
-            resType = PR_NotTaken;
-            pmap->cond_val[breg] = -1;
-        } else {
-            // LOOP EXHAUSTED: Will be handled in decode validate/finalize
+        if (     pmap->cond_val[breg] > 0)  { resType = PR_Taken; }
+        else if (pmap->cond_val[breg] == 0) { resType = PR_NotTaken; }
+        else { // LOOP EXHAUSTED: Will be handled in decode validate/finalize
             resType = PR_Exhaust;
             DPRINTF(PBTB, "PBTB (F): Loop at -1: Exhausted\n");
-            //printf("PBTB: Loop at -1: ERROR\n");
         }
 
     } else if (brType == ShiftBit) {
@@ -516,37 +502,48 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
                 (numbits>0 && bits&1) ? "T" : "NT",
                 pcAddr, pmap->target[breg]);
 
-        //CONSUMED A BIT
-        //DPRINTF(Decode, "PBTB (F): \\-> Consumed a bit\n");
-
         // cond_val holds bits, cond_aux_val is number of bits valid
-        if (pmap->cond_aux_val[breg] > 0) { //if num_bits > 0
-            int bit = pmap->cond_val[breg] & 0x1;
-            resType = bit ? PR_Taken : PR_NotTaken;
-            pmap->cond_val[breg] >>= 1; // shift out bottom bit
-            pmap->cond_aux_val[breg]--; // bits-- (don't underflow!)
-        } else { // no bits, exhause (will be handled in decode:finalize)
+        if (numbits > 0) {
+            resType = bits & 0x1 ? PR_Taken : PR_NotTaken;
+        } else { // no bits, exhaust (will be handled in decode:finalize)
             resType = PR_Exhaust;
-            //printf("PBTB: ShiftBit out of bits: Exhausted\n");
             DPRINTF(PBTB, "PBTB (%s): ShiftBit out of bits: Exhausted\n",
                             debugWhichMap);
         }
     } else {
-        DPRINTF(PBTB, "PBTB: Unrecognized branch type %d\n", brType);
         panic("PBTB got query for unrecognized branch type");
         // return PR_NoMatch; // Alternatively, return no match?
     }
 
-    // ==== Prediction made: return to caller
-    // Return next-fetched PC through pc arg
-
-    assert(breg >= 0); // breg guaranteed to be valid,
-                       // otherwise we'd have returned earlier
-                       //
-    *p_breg_out = breg;
+    // ==== Prediction made: return info to caller
+    *p_breg_out = breg; // we asserted breg valid earlier
     *p_version_out = pmap->version[breg];
     if (resType == PR_Taken) { *p_targetAddr_out = pmap->target[breg]; }
     return resType;
+}
+
+void PrecomputedBTB::m_consumeIter(struct pbtb_map *pmap, int breg) {
+    if (breg == -1) { return; }
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+
+    PrecomputedBTB::BranchType brType = pmap->cond_type[breg];
+
+    if (brType == NoBranch) { // (nothing here to consume from)
+    } else if (brType == Taken) { // (infinite iterations)
+    } else if (brType == LoopN) {
+        if (pmap->cond_val[breg] >= 0) { // if not exhausted
+            pmap->cond_val[breg]--; // iterations--
+        }
+
+    } else if (brType == ShiftBit) {
+        if (pmap->cond_aux_val[breg] > 0) { // if not exhausted
+            pmap->cond_val[breg] >>= 1; // shift bits down 1
+            pmap->cond_aux_val[breg]--; // num_bits--
+        }
+
+    } else {
+        panic("PBTB consumeIter on unrecognized branch type");
+    }
 }
 
 // =============== PUBLIC Modification functions
@@ -601,9 +598,11 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
             int *p_breg_out, uint64_t *p_version_out) {
 
     Addr tgt = pc_inout.instAddr(); //will be overwritten if taken
-                              //
+
     PBTBResultType res = m_queryPC(&map_fetch, pc_inout.instAddr(),
             p_breg_out, p_version_out, &tgt);
+
+    m_consumeIter(&map_fetch, *p_breg_out);
 
     // TODO: I'm not sure how to deal with PCStateBases: this tempAddr
     // thing seems to work, so I'm sticking with it
@@ -632,8 +631,15 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
             const StaticInstPtr inst,  Addr pcAddr,
             int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
 
+
     PBTBResultType res = m_queryPC(&map_final, pcAddr,
             p_breg_out, p_version_out, p_targetAddr_out);
+
+    // If the breg we query could be modified by hitting it with a pb, we need
+    // to make sure we save the breg's state
+    // TODO: if map_final.cond_type[breg] == LoopN || ShiftBit { ... }
+    //savePrevState(test_breg, );
+    m_consumeIter(&map_final, *p_breg_out);
 
     if (res != PR_Taken) {
         // TODO: This is a horrible pile of hacks but I don't want to switch

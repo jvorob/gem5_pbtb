@@ -1086,22 +1086,22 @@ class DynInst : public ExecContext, public RefCounted
 
         switch(op) {
             case BMOV_OP_SRC:
-                cpu->PBTB.setSource(btb_slot, addr);
+                cpu->PBTB.setSource(btb_slot, this->seqNum, addr);
                 break;
             case BMOV_OP_TGT:
-                cpu->PBTB.setTarget(btb_slot, addr);
+                cpu->PBTB.setTarget(btb_slot, this->seqNum, addr);
                 break;
             case BMOV_OP_C_TAKEN:
-                cpu->PBTB.setCondition(
-                        btb_slot, PrecomputedBTB::BranchType::Taken, 1);
+                cpu->PBTB.setCondition( btb_slot, this->seqNum,
+                        PrecomputedBTB::BranchType::Taken, 1);
                 break;
             case BMOV_OP_C_LOOP:
-                cpu->PBTB.setCondition(
-                        btb_slot, PrecomputedBTB::BranchType::LoopN, addr);
+                cpu->PBTB.setCondition( btb_slot, this->seqNum,
+                        PrecomputedBTB::BranchType::LoopN, addr);
                 break;
             case BMOV_OP_C_BITS:
-                cpu->PBTB.setCondition(
-                        btb_slot, PrecomputedBTB::BranchType::ShiftBit,
+                cpu->PBTB.setCondition( btb_slot, this->seqNum,
+                        PrecomputedBTB::BranchType::ShiftBit,
                         addr, n);
                 break;
             case BMOV_OP_C_BITCLEAR:

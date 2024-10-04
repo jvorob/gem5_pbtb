@@ -5,6 +5,7 @@
  * THIS SOFTWARE IS PROVIDED "AS IS" BY ITS LONE GRAD-STUDENT AUTHOR,
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO
  * LOREM IPSUM DOLOR SIT AMET GLORIAM BLAH BLAH ETC ARE DISCLAIMED.
+ *
  * CITE IT IF YOU COPY IT.
  */
 
@@ -14,6 +15,7 @@
 #include <cassert>
 
 #include "arch/generic/pcstate.hh"
+#include "base/cprintf.hh"
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/static_inst.hh"
@@ -28,6 +30,66 @@ namespace o3
 
 class CPU; // forward declare? Need for getting ptr to cpu
 
+// ==============================================================
+//
+//                     JV Bitvec
+//
+// ==============================================================
+
+class BitVec64
+{
+    /* Minimal abstraction over a queue of bits (uin64_t + a count)
+     * To be used as a value type
+     * Can push/pop at front/back
+     * (front is LSB-side, back is MSB-side)
+     */
+
+    private:
+        int num_valid; // how many of the bits, from LSB are valid
+        uint64_t data; // the underlying 64 bits, treat LSB as [0], MSB as [63]
+                       // [0] is LSB, push/pop at LSB, push_back/popback at MSB
+        const static int capacity = 64; // max # of bits `data` can hold
+
+    public:
+        BitVec64(int n, uint64_t bits): num_valid(n), data(bits)
+          { assert(n >= 0 && n <= capacity); };
+        BitVec64(): BitVec64(0, 0) {};
+
+        // default constructors for move, move=, copy, copy= (memberwise)
+        BitVec64(std::initializer_list<bool> lst): BitVec64(0,0) {
+            assert(lst.size() <= 64);
+            for (auto b : lst) {
+                push_back(b);
+            }
+        }
+    public:
+
+        int size() { return num_valid; }
+        // true means this can hold at least n more bits
+        bool has_capacity(int n) { return (n + num_valid) <= capacity; }
+
+        // i must be already within the size of the vector
+        bool at(int i);
+        void write_bit(int i, bool is_set );
+
+        // Panic if full / empty
+        void push_back(bool bit);
+        void push_front(bool bit);
+        bool pop_back();
+        bool pop_front();
+
+        // modifies self, other gets placed at back of self
+        void append(BitVec64 other);
+
+        // print full debug info
+        std::string toDebugString(bool verbose=false) const;
+
+        // Formats as just "110011" or "", LSB-first
+        std::string toString() const;
+
+        // To avoid putting this in gem5 main, just call this somewhere?
+        static void test_bitvecs();
+};
 
 // ==============================================================
 //
@@ -154,6 +216,7 @@ class PrecomputedBTB
     //
     // ================================================================
     // Each of these is a single pbtb_map
+    // (i.e. 1 for decode, 1 for finalize, etc)
     // TODO: maybe put these in their own class?
 
     //Each checkpoint stores all this data
@@ -171,6 +234,147 @@ class PrecomputedBTB
     };
 
 
+    // ================================================================
+    //
+    //                         UNDO STATES
+    //
+    // ================================================================
+    // We need to be able to squash instructions that modify the map_final pmap
+    // Most bmovs can be undone by simply reverting to the previous pbtb state
+    // (for bmovs that can't be interleaved, e.g. that update the version)
+    //   However we must also be able to undo bit-pushes and bit-consumes
+    // individually, as they can be interleaved (bit-type bmovs or pbs).
+    //   To support this, an undo_entry for a breg holds an undo_state, which
+    // can be either a full breg's data (for overwriting), or a partial
+    // undo-state (specifying which bits were consumed, or how many bits were
+    // pushed)
+
+    // Stores the state of a single breg: not used in pbtb_map, but used
+    // for stashing/passing around full value of a single breg in undo history
+/*
+pmap {
+  PmapAction // action applied to a single struct pbtb_map
+  PBTBAction // action applied to the pbtb (fetch vs decode, )
+
+  UndoToken applyAction(PBTBAction) {
+  }
+}
+*/
+
+  public:
+    struct breg_data
+    {
+        int64_t   version;
+        Addr      source;
+        Addr      target;
+        BranchType cond_type;
+        int64_t   cond_val;
+        int64_t   cond_aux_val;
+    };
+
+  private:
+    // ================ UNDO ACTIONS
+
+    enum class utype
+    {
+      U_NONE,        // Nothing to undo, can discard
+
+      // U_SET_PART, // arg( which field? (src/tgt/etc)), needed to implement
+      //                fwd actions properly, but not neede for undo
+      U_FULL,        // Used to undo a version?
+
+      //U_PUSH_BITS, // arg(bitvec) used by bit-bmovs (pushes at back of queue)
+      U_UNPUSH_BITS, // arg(n) used to undo bit-bmov (removes 1 from BACK)
+
+      //U_POP_BITS,   // arg(n), used by pb, pops from front of queue
+      U_UNPOP_BITS, // arg(bit), used to undo pb
+    };
+
+  //class UndoAction {
+  //  public:
+  //    // version: before/after the action
+  //    // for ops that don't modify version, these will be equal
+  //    int64_t undone_ver;
+  //    int64_t done_ver;
+  //    int8_t breg;
+
+  //    // type-specific stuff
+  //    utype type;
+  //    union {
+  //      struct breg_data as_overwrite;
+  //      BitVec64 as_consumed_bits; // undo by returning the bit to hd
+  //      int as_pushed_bits; // undo by un-pushing those bits from tail
+  //    };
+
+  //    static UndoAction MkFull(int8_t breg,
+  //                             int64_t new_version, breg_data old_data) {
+  //      auto u = UndoAction(breg, old_data.version,
+  //    }
+
+  //  private:
+  //};
+
+
+    struct undo_action
+    {
+        // version: before/after the action
+        // for ops that don't modify version, these will be equal
+        int breg;
+        int64_t undone_ver;
+        int64_t done_ver;
+
+        // type-specific stuff
+        utype type;
+        union
+        {
+          struct breg_data as_overwrite;
+          BitVec64 as_consumed_bits; // undo by returning the bits to head
+          int as_pushed_bits; // undo by un-pushing those bits from tail
+        };
+    };
+
+    struct undo_entry
+    {
+        InstSeqNum seqnum;
+        struct undo_action action;
+    };
+
+    // Gets/sets a single bregs value?
+    static struct breg_data breg_get(const struct pbtb_map *pmap, int breg);
+    static void breg_set(struct pbtb_map *pmap, int breg,
+                  const struct breg_data *data);
+
+    static std::string bdataToString(const struct breg_data &bdata);
+    static std::string undoEntryToString(const struct undo_entry &ent) {
+        std::string prev_str; // descriptor of what will be undone
+        switch(ent.action.type) {
+          case utype::U_FULL:
+              prev_str = csprintf("prev state: %s",
+                  bdataToString(ent.action.as_overwrite));
+              break;
+          case utype::U_UNPOP_BITS:
+              prev_str = csprintf("pb had consumed: fst<%s>lst",
+                  ent.action.as_consumed_bits.toString());
+              break;
+          case utype::U_UNPUSH_BITS:
+              prev_str = csprintf("bmov had pushed %d bits",
+                  ent.action.as_pushed_bits);
+              break;
+          case utype::U_NONE:
+              prev_str = csprintf("noop");
+              break;
+        }
+
+        std::string v_str; // describes version (either v->v, or just v+);
+        v_str = csprintf("v%d->v%d",
+            ent.action.undone_ver, ent.action.done_ver);
+
+        return csprintf("UNDO entry [sn:%d]: b%d %s (%s)",
+            ent.seqnum, ent.action.breg, v_str, prev_str);
+    };
+
+
+
     struct pbtb_map map_fetch = {};
     struct pbtb_map map_final = {}; // init to all 0s
 
@@ -183,15 +387,15 @@ class PrecomputedBTB
     // of loop iterations / shifted bits. All other modifications should apply
     // simultaneously to both. map_commit (once it's in) might differ though
 
-    void m_setSource(struct pbtb_map *pmap, int breg, Addr source_addr);
-    void m_setTarget(struct pbtb_map *pmap, int breg, Addr target_addr);
+    undo_action m_setSource(struct pbtb_map *pmap, int breg, Addr source_addr);
+    undo_action m_setTarget(struct pbtb_map *pmap, int breg, Addr target_addr);
 
     // Sets the condition for a given breg
     // val treated differently for different types?
     // - Taken or NotTaken ignore it
     // - LoopTaken will be taken (val) times, then NT, than stall
     // - ShiftBit takes a bitstring in val, bottom n bits shifted in
-    void m_setCondition(struct pbtb_map *pmap, int breg,
+    undo_action m_setCondition(struct pbtb_map *pmap, int breg,
             BranchType conditionType, uint64_t val, int64_t n);
 
 
@@ -222,19 +426,44 @@ class PrecomputedBTB
     //  breg. If breg is empty/invalid(-1)/exhausted, does nothing
     //  TODO: make this return a result? how many iters consumed?
     //  TODO: make this a more general clear method?
-    void m_consumeIter(struct pbtb_map *pmap, int breg);
+    undo_action m_consumeIter(struct pbtb_map *pmap, int breg);
+
+    std::vector<struct undo_entry> undo_stack;
+
+    // ========= UNDO STUFF
+    // Any methods that modify a pmap should return an undo_action, which
+    // can be applied to a pmap to revert it to its exact state before
+    // the modification (assuming no intervening edits)
+    //
+    // If multiple m_ modifications return non-empty undo actions,
+    // those undo actions can be applied in reverse order to yield
+    // the initial state.
+    //
+    // Undo actions can also be arbitratily reordered if they are for
+    // different bregs (as long as order within a breg is maintained)
+    //
+    // Also: push_bits and consume_bits can always be reordered so that
+    // they are undone in reverse sequence-number order
+    // (can't reorder arbitrarily, might overflow the bitvec)
+    void m_apply_undo(struct pbtb_map *pmap, undo_action undo);
+
+
+    // Given an undo action and the seqnum, records it onto the history
+    // TODO: accept 0 or more undo_actions?
+    void savePrevState(int breg, InstSeqNum seqnum, undo_action undo);
+    // undoes back to and including squashingSeqNum
+    void unwindSquash(InstSeqNum squashingSeqNum);
 
   public:
     // ================== External-interface functions
     // These should modify both map_fetch and map_final
+    // NOTE: ALL OF THESE SHOULD SAVE STATE IF THEY MODIFY MAP_FINAL
     // TODO: eventually these might need to modify commit?
-    // NOTE: we SHOULDNT need a seq num for bmovc anymore, but we might need
-    // it if we do checkpointing again and I'm too lazy to take it out rn
-    void setSource(int breg, Addr source_addr);
-    void setTarget(int breg, Addr target_addr);
-    void setCondition(int breg,
+    void setSource(int breg, InstSeqNum seqnum, Addr source_addr);
+    void setTarget(int breg, InstSeqNum seqnum, Addr target_addr);
+    void setCondition(int breg, InstSeqNum seqnum,
                       BranchType conditionType, uint64_t val);
-    void setCondition(int breg,
+    void setCondition(int breg, InstSeqNum seqnum,
                       BranchType conditionType, uint64_t val, int64_t n);
 
 
@@ -251,12 +480,17 @@ class PrecomputedBTB
     //Note: if not taken, will instead
     //advance pcAddr and return in targetAddr_out
     PBTBResultType queryFromDecode(
-            const StaticInstPtr inst, Addr pcAddr,
+            const StaticInstPtr inst, Addr pcAddr, InstSeqNum seqnum,
             int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
 
 
     // Checks if breg is ready to finalize a bit-type branch
     bool isBregBitTypeAndReady(int breg) const;
+
+    // if a Pb hits in this breg, is there any chance that it will
+    // modify the map's state in a way that might need undoing
+    // (note: false is always accurate, but true might be conservative)
+    bool pbCouldModifyState(const struct pbtb_map *pmap, int breg) const;
 
     // === Squash behavior:
     // resetToFinalizedMap() // for when we squash from decode
@@ -265,7 +499,6 @@ class PrecomputedBTB
     void debugDump();
     // Limits which regs to print (to limit output). Inclusive/exclusive
     void debugDump(int regstart, int regstop);
-
 
 
 }; // class PrecomputedBTB

@@ -802,6 +802,7 @@ Decode::decodeInsts(ThreadID tid)
         //TODO: do this properly
         res = cpu->PBTB.queryFromDecode(inst->staticInst,
                                         inst->pcState().instAddr(),
+                                        inst->seqNum,
                                         &d_breg, &d_version, &d_targAddr);
         d_exhausted = (res == PrecomputedBTB::PR_Exhaust);
         d_taken = (res == PrecomputedBTB::PR_Taken);

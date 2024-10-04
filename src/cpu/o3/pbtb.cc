@@ -31,7 +31,9 @@ const char* PrecomputedBTB::BranchTypeStrs[] = { "NoBranch", "Taken", "Loop",
 
 
 // TODO: make this return an std::string?
-const std::string debugPrintBottomBits(uint64_t bits, int n) {
+const std::string debugPrintBottomBits(
+        uint64_t bits, int n, bool lsb_first=false)
+{
     char debug_bit_buff[65];
 
     debug_bit_buff[64] = '\0'; //null terminate just to be safe
@@ -39,12 +41,130 @@ const std::string debugPrintBottomBits(uint64_t bits, int n) {
 
     int i;
     for (i = 0; i < n; i++) {
-        int bit_offset = n - i - 1; //1st digit is at (bits >> (n-1))
+        // MSB is at (bits >> (n-1))
+        // LSB is at 0
+        int bit_offset = lsb_first ? i : n - i - 1;
         int bit = (bits >> bit_offset) & 1;
         debug_bit_buff[i] = bit ? '1':'0';
     }
     debug_bit_buff[i] = '\0';
     return std::string { debug_bit_buff };
+}
+
+// ==============================================================
+//
+//                        JV Bitvecs
+//
+// ==============================================================
+
+
+
+bool BitVec64::at(int i) {
+    assert(i >= 0 && i < size());
+    return (data >> i) & 1;
+}
+
+// i must be already within the size of the vector
+void BitVec64::write_bit(int i, bool is_set ) {
+    assert(i >= 0 && i < size());
+    data &= ~( ((uint64_t)1) << i ); // clear i-th bit
+    data |= ( ((uint64_t)is_set) << i ); // write i-th bit
+}
+
+// append at MSB-side, (panics if full)
+void BitVec64::push_back(bool bit) {
+    assert(has_capacity(1));
+    num_valid++; // need to increment num_valid first (write_bit checks it)
+    write_bit(num_valid-1, bit);
+}
+
+// push at LSB-side (panic if full);
+void BitVec64::push_front(bool bit) {
+    assert(has_capacity(1));
+    data <<= 1;
+    data |= bit;
+    num_valid++;
+}
+
+bool BitVec64::pop_back() {
+    assert(size() >= 1);
+    bool bit = at(num_valid-1);
+    write_bit(num_valid-1, 0); // unnecessary? (but prevents garbage)
+    num_valid--;
+    return bit;
+}
+
+bool BitVec64::pop_front() {
+    assert(size() >= 1);
+    bool bit = at(0);
+    data >>=1;
+    num_valid--;
+    return bit;
+}
+
+// modifies self, other gets placed at back of self
+void BitVec64::append(BitVec64 other) {
+    assert(has_capacity(other.size()));
+    data |= other.data<<size();
+    num_valid += other.size();
+}
+
+// print full debug info
+std::string BitVec64::toDebugString(bool verbose) const {
+    std::string bitstring = debugPrintBottomBits(data, num_valid, true);
+
+    std::string verbose_info = (!verbose) ? std::string("") :
+        csprintf(", data: %s",
+            debugPrintBottomBits(data, capacity).c_str());
+    return csprintf("<BitVec64 LSB:%s:MSB, size:%d%s> ",
+            bitstring.c_str(), num_valid, verbose_info.c_str());
+}
+
+// Formats as just "110011" or "", LSB-first
+std::string BitVec64::toString() const {
+    std::string bitstring = debugPrintBottomBits(data, num_valid, true);
+    //return csprintf("<bv '%s' n=%d> ", bitstring.c_str(), num_valid);
+    return csprintf("%s", bitstring.c_str());
+}
+
+// aaa I don't want to figure out how to replace gem5's main,
+// we can just call this from somewhere
+static void test_bitvecs() {
+    BitVec64 empty = BitVec64();
+    BitVec64 t = BitVec64(1, 1);
+    //BitVec64 f = BitVec64(1, 0);
+    BitVec64 vec_7 = BitVec64(3, 0x7);
+    //BitVec64 vec_07 = BitVec64(4, 0x7);
+
+    assert(empty.size() == 0);
+    assert(t.size() == 1);
+    assert(vec_7.size() == 3);
+
+    BitVec64 vinit = BitVec64 {1,1,0,0};
+    assert(vinit.pop_front() == 1);
+    assert(vinit.pop_front() == 1);
+    assert(vinit.pop_front() == 0);
+    assert(vinit.pop_front() == 0);
+    assert(vinit.size() == 0);
+
+    // should be able to hold 64
+    BitVec64 v64 = BitVec64(); // clear v64
+    for (int i = 0; i < 32; i++) {
+        v64.push_back(1);
+        v64.push_back(0);
+    }
+    assert(v64.size() == 64);
+    assert(!v64.has_capacity(1));
+
+    // append 0101 to vec7, should be 1110101
+    //printf("=== testing append\n");
+    vec_7.append(BitVec64{0,1,0,1});
+    //show(vec_7);
+
+    assert(vec_7.size() == 7);
+    for (auto i : { 1, 1, 1, 0, 1, 0, 1 }) {
+        assert(vec_7.pop_front() == i);
+    }
 }
 
 // ==============================================================
@@ -305,12 +425,123 @@ void PrecomputedBTB::debugDump(int regstart, int regstop) {
 
 void PrecomputedBTB::debugDump() { debugDump(0, NUM_REGS); }
 
+// =============== Single-breg accessors
+//using PrecomputedBTB::breg_data;
+// Gets/sets a single bregs value?
+struct PrecomputedBTB::breg_data PrecomputedBTB::breg_get(
+        const struct pbtb_map *pmap, int breg)
+{
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+    struct breg_data retval =
+    {
+        .version      = pmap->version      [breg],
+        .source       = pmap->source       [breg],
+        .target       = pmap->target       [breg],
+        .cond_type    = pmap->cond_type    [breg],
+        .cond_val     = pmap->cond_val     [breg],
+        .cond_aux_val = pmap->cond_aux_val [breg],
+    };
+    return retval;
+}
+
+void PrecomputedBTB::breg_set(
+        struct pbtb_map *pmap, int breg, const struct breg_data *data)
+{
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+    pmap->version     [breg] = data->version;
+    pmap->source      [breg] = data->source;
+    pmap->target      [breg] = data->target;
+    pmap->cond_type   [breg] = data->cond_type;
+    pmap->cond_val    [breg] = data->cond_val;
+    pmap->cond_aux_val[breg] = data->cond_aux_val;
+}
+
+void PrecomputedBTB::savePrevState(int breg, InstSeqNum seqnum,
+                                   undo_action undo) {
+    struct undo_entry undo_entry =
+    {
+        .seqnum = seqnum,
+        .action = undo,
+    };
+
+    DPRINTF(PBTB, "Current undo stack:\n");
+    for (const auto &entry : undo_stack) {
+        DPRINTF(PBTB, "- %s\n", undoEntryToString(entry));
+    };
+
+    DPRINTF(PBTB, "saving to undo stack: %s\n", undoEntryToString(undo_entry));
+
+
+    // actions should arrive in order
+    //assert(undo_stack.empty() || undo_stack.back().seqnum < seqnum);
+    // TODO TEMP: we need to allow out-of-order if theyre in diff bregs,
+    //            or same-breg but push/pop (same version)
+    if (!( undo_stack.empty() || undo_stack.back().seqnum < seqnum )) {
+        DPRINTF(PBTB, "WARNING: out-of-order undo-entries, NOT FINISHED\n");
+    }
+    undo_stack.push_back(undo_entry);
+}
+
+std::string PrecomputedBTB::bdataToString(const struct breg_data &bdata) {
+    auto brType = bdata.cond_type;
+
+    if (brType == NoBranch) {
+        return csprintf("NOBRANCH");
+    } else if (brType == Taken) {
+        return csprintf("TKN 0x%x -> 0x%x", bdata.source, bdata.target);
+
+    } else if (brType == LoopN) {
+        const char* outcome = bdata.cond_val >0 ? "T" :
+                              bdata.cond_val==0 ? "NT":
+                                                  "EX";
+        return csprintf("LOOP{%d} (%s) 0x%x -?> 0x%x",
+                bdata.cond_val, outcome,
+                bdata.source, bdata.target);
+
+    } else if (brType == ShiftBit) {
+        uint64_t bits = bdata.cond_val;
+        uint64_t numbits = bdata.cond_aux_val;
+        const char* outcome = numbits == 0 ? "EX" : (bits & 0x1 ? "T": "NT");
+        return csprintf("BIT{%s} (%s) 0x%x -?> 0x%x",
+                debugPrintBottomBits(bits,numbits).c_str(),
+                outcome,
+                bdata.source, bdata.target);
+
+    } else {
+        panic("bdata got unrecognized branch type");
+    }
+}
+
+// undoes back to and including squashingSeqNum
+void PrecomputedBTB::unwindSquash(InstSeqNum squashingSeqNum) {
+    DPRINTF(PBTB, "PBTB: Unwinding to inst [sn:%d]\n", squashingSeqNum);
+    while (!undo_stack.empty()) {
+        struct undo_entry curr = undo_stack.back();
+        if (curr.seqnum >= squashingSeqNum) {
+            DPRINTF(PBTB, "PBTB: undoing PBTB op [sn:%d], b%d\n",
+                squashingSeqNum, curr.action.breg);
+            // TODO:
+            panic("breg undo not implemented");
+            //breg_set(&map_final, curr.breg, &curr.prev_state);
+            undo_stack.pop_back();
+        }
+    }
+}
 
 // =============== Per-Map functions (PRIVATE)
 
-void PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
+PrecomputedBTB::undo_action PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
                                  int breg, Addr source_addr) {
     assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
+
+    undo_action retval = { // return previous value as undo
+        .breg = breg,
+        .undone_ver = pmap->version[breg],
+        .done_ver = pmap->version[breg]+1,
+        .type = utype::U_FULL,
+        .as_overwrite = breg_get(pmap, breg),
+    };
+
     pmap->source[breg] = source_addr;
     pmap->version[breg]++; //TODO: set this to seqNum instead
 
@@ -318,10 +549,20 @@ void PrecomputedBTB::m_setSource(struct pbtb_map *pmap,
     pmap->cond_type[breg]    = NoBranch;
     pmap->cond_val[breg]     = 0;
     pmap->cond_aux_val[breg] = 0;
+
+    return retval;
 }
-void PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
+PrecomputedBTB::undo_action PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
                                  int breg, Addr target_addr) {
     assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
+    undo_action retval = { // return previous value as undo action
+        .breg = breg,
+        .undone_ver = pmap->version[breg],
+        .done_ver = pmap->version[breg]+1,
+        .type = utype::U_FULL,
+        .as_overwrite = breg_get(pmap, breg),
+    };
+
     pmap->target[breg] = target_addr;
     pmap->version[breg]++; //TODO: set this to seqNum instead
 
@@ -329,6 +570,8 @@ void PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
     pmap->cond_type[breg]    = Taken;
     pmap->cond_val[breg]     = 0;
     pmap->cond_aux_val[breg] = 0;
+
+    return retval;
 }
 
 // Sets the condition for a breg in a pmap
@@ -336,23 +579,22 @@ void PrecomputedBTB::m_setTarget(struct pbtb_map *pmap,
 // - Taken or NotTaken ignore it
 // - LoopTaken will be taken (val) times, then NT once, then repeat
 // - ShiftBit takes a bitstring in val, and enqueues the bottom n bits of it
-//
-void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
+PrecomputedBTB::undo_action PrecomputedBTB::m_setCondition(
+                                  struct pbtb_map *pmap,
                                   int breg,
                                   BranchType conditionType,
                                   uint64_t val,
                                   int64_t n) {
 
-    //LATER TODO: we shouldn't actually need checkpoints on bmovs, only on
-    // branches (whether real or false positives)
-    // However, we can't make that work until we have branches stall in decode
-    // when bmovs are in flight
-    //squashYoungerCheckpoints(seqNum);
-
-    // need to squash all ops older than seqnum (or == seqnum, if the bmov
-    // itself was mispredicted as a branch)
-    //TODO: make a new checkpoint every time we set a condition
-    //makeNewCheckpoint(seqNum);
+    // Save prev value for undo-action
+    // (if we only do a partial edit, we'll save something else)
+    undo_action ret_undo = { // return previous value as undo action
+        .breg = breg,
+        .undone_ver = pmap->version[breg],
+        .done_ver = pmap->version[breg]+1,
+        .type = utype::U_FULL,
+        .as_overwrite = breg_get(pmap, breg),
+    };
 
     assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
     switch (conditionType) {
@@ -380,6 +622,12 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
                 // change (so we can produce and consume simultaneously
                 //         as long as enough bits are in the queue)
                 pmap->version[breg]++; //TODO: set this to seqNum instead
+            } else {
+                // if we're only appending, return a partial undo action
+                // so we can re-order it with pb consumes
+                ret_undo.type = utype::U_UNPUSH_BITS;
+                ret_undo.done_ver = ret_undo.undone_ver; // ver doesn't change
+                ret_undo.as_pushed_bits = 1;
             }
             pmap->cond_type[breg]    = ShiftBit;
 
@@ -421,6 +669,8 @@ void PrecomputedBTB::m_setCondition(struct pbtb_map *pmap,
             panic("Unrecognized condition-type in PBTB");
             break;
     }
+
+    return ret_undo;
 }
 
 int PrecomputedBTB::m_findMatchingBreg(const struct pbtb_map *pmap,
@@ -522,8 +772,17 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::m_queryPC(
     return resType;
 }
 
-void PrecomputedBTB::m_consumeIter(struct pbtb_map *pmap, int breg) {
-    if (breg == -1) { return; }
+PrecomputedBTB::undo_action PrecomputedBTB::m_consumeIter(
+            struct pbtb_map *pmap, int breg)
+{
+    // Default our undo action to no change
+    undo_action ret_undo = {
+        .breg = breg,
+        .undone_ver = pmap->version[breg],
+        .done_ver = pmap->version[breg],  // consuming doesn't change version
+        .type = utype::U_NONE } ;
+
+    if (breg == -1) { return ret_undo; }
     assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
 
     PrecomputedBTB::BranchType brType = pmap->cond_type[breg];
@@ -532,11 +791,20 @@ void PrecomputedBTB::m_consumeIter(struct pbtb_map *pmap, int breg) {
     } else if (brType == Taken) { // (infinite iterations)
     } else if (brType == LoopN) {
         if (pmap->cond_val[breg] >= 0) { // if not exhausted
+            // we could do this fancier, but for now just do a full undo
+            ret_undo.type = utype::U_FULL;
+            ret_undo.as_overwrite = breg_get(pmap, breg);
+
             pmap->cond_val[breg]--; // iterations--
         }
 
     } else if (brType == ShiftBit) {
         if (pmap->cond_aux_val[breg] > 0) { // if not exhausted
+            // pb is consuming a bit: undo action is unconsuming it
+            ret_undo.type = utype::U_UNPOP_BITS;
+            bool bit = pmap->cond_val[breg] & 1;
+            ret_undo.as_consumed_bits = BitVec64{bit}; // only 1 bit?
+
             pmap->cond_val[breg] >>= 1; // shift bits down 1
             pmap->cond_aux_val[breg]--; // num_bits--
         }
@@ -544,6 +812,8 @@ void PrecomputedBTB::m_consumeIter(struct pbtb_map *pmap, int breg) {
     } else {
         panic("PBTB consumeIter on unrecognized branch type");
     }
+
+    return ret_undo;
 }
 
 // =============== PUBLIC Modification functions
@@ -551,26 +821,30 @@ void PrecomputedBTB::m_consumeIter(struct pbtb_map *pmap, int breg) {
 
 
 // == Each of these should correspond to one bmov instruction
-void PrecomputedBTB::setSource(int breg, Addr source_addr) {
+void PrecomputedBTB::setSource(int breg, InstSeqNum seqnum, Addr source_addr) {
     m_setSource(&map_fetch, breg, source_addr);
-    m_setSource(&map_final, breg, source_addr);
+    auto undo = m_setSource(&map_final, breg, source_addr);
+    savePrevState(breg, seqnum, undo);
 }
-void PrecomputedBTB::setTarget(int breg, Addr target_addr) {
+void PrecomputedBTB::setTarget(int breg, InstSeqNum seqnum, Addr target_addr) {
+    //savePrevState(breg, seqnum);
     m_setTarget(&map_fetch, breg, target_addr);
-    m_setTarget(&map_final, breg, target_addr);
+    auto undo = m_setTarget(&map_final, breg, target_addr);
+    savePrevState(breg, seqnum, undo);
 }
-void PrecomputedBTB::setCondition(int breg, BranchType conditionType,
-                    uint64_t val, int64_t n) {
+void PrecomputedBTB::setCondition(int breg, InstSeqNum seqnum,
+                    BranchType conditionType, uint64_t val, int64_t n) {
+    //savePrevState(breg, seqnum);
     m_setCondition(&map_fetch, breg, conditionType, val, n);
-    m_setCondition(&map_final, breg, conditionType, val, n);
+    auto undo = m_setCondition(&map_final, breg, conditionType, val, n);
+    savePrevState(breg, seqnum, undo);
 }
 
 // Just an alias for the previous one
 // We only use n for the ShiftBit branch type, so can omit it otherwise
-void PrecomputedBTB::setCondition(int breg, BranchType conditionType,
-                    uint64_t val) {
-    m_setCondition(&map_fetch, breg, conditionType, val, 0);
-    m_setCondition(&map_final, breg, conditionType, val, 0);
+void PrecomputedBTB::setCondition(int breg, InstSeqNum seqnum,
+                    BranchType conditionType, uint64_t val) {
+    setCondition(breg, seqnum, conditionType, val, 0);
 }
 
 
@@ -628,8 +902,9 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
 //NOTE: if not taken, will use inst to instead advance targetAddr_out
 //to nextPc
 PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
-            const StaticInstPtr inst,  Addr pcAddr,
+            const StaticInstPtr inst,  Addr pcAddr, InstSeqNum seqnum,
             int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
+
 
 
     PBTBResultType res = m_queryPC(&map_final, pcAddr,
@@ -637,9 +912,12 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
 
     // If the breg we query could be modified by hitting it with a pb, we need
     // to make sure we save the breg's state
-    // TODO: if map_final.cond_type[breg] == LoopN || ShiftBit { ... }
-    //savePrevState(test_breg, );
-    m_consumeIter(&map_final, *p_breg_out);
+
+    undo_action undo = m_consumeIter(&map_final, *p_breg_out);
+    if (undo.type != utype::U_NONE) {
+        // Undo type will only be non-None if we hit a loop or bit-branch
+        savePrevState(*p_breg_out, seqnum, undo);
+    }
 
     if (res != PR_Taken) {
         // TODO: This is a horrible pile of hacks but I don't want to switch
@@ -665,6 +943,28 @@ bool PrecomputedBTB::isBregBitTypeAndReady(int breg) const {
         return true;
     }
     return false;
+}
+
+//
+bool PrecomputedBTB::pbCouldModifyState(
+        const struct pbtb_map *pmap, int breg) const
+{
+    if (breg < 0) { return false; }
+    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+
+    // TODO: technically we don't care if branch is exhausted?
+    //       but that shouldn't matter since that only happens in exceptions,
+    switch ( map_final.cond_type[breg] ) {
+        case PrecomputedBTB::BranchType::LoopN:
+        case PrecomputedBTB::BranchType::ShiftBit:
+            return true;
+        case PrecomputedBTB::BranchType::NoBranch:
+        case PrecomputedBTB::BranchType::Taken:
+            return false;
+        case PrecomputedBTB::BranchType::ShiftBit_Clear:
+            panic("ShiftBit_Clear is not a valid branchtype");
+    }
+    panic("Oops, unexpected switch val");
 }
 
 // ==============================================================

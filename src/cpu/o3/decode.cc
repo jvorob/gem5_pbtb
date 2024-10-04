@@ -804,8 +804,8 @@ Decode::decodeInsts(ThreadID tid)
                                         inst->pcState().instAddr(),
                                         inst->seqNum,
                                         &d_breg, &d_version, &d_targAddr);
-        d_exhausted = (res == PrecomputedBTB::PR_Exhaust);
-        d_taken = (res == PrecomputedBTB::PR_Taken);
+        d_exhausted = (res == PrecomputedBTB::PBTBResultType::PR_Exhaust);
+        d_taken = (res == PrecomputedBTB::PBTBResultType::PR_Taken);
 
         // ===== Also pull up the original predictions from fetch to compare
         int      f_breg      = inst->readPredBTBReg();

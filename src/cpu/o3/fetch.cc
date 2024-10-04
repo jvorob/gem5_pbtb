@@ -506,7 +506,7 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     //predict_taken = cpu->PBTB.isBranch(inst->staticInst, inst->seqNum,
     //                                   next_pc, tid);
 
-    PrecomputedBTB::PBTBResultType res;
+    PBTBMap::PBTBResultType res;
     int breg = -1;
     uint64_t version = 0;
 
@@ -515,12 +515,12 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     // Apply pred flags to see if we mispredicted later
     inst->setPredBTBReg(breg);
     inst->setPredBTBVersion(version);
-    inst->setPredBTBExhausted(res == PrecomputedBTB::PR_Exhaust);
+    inst->setPredBTBExhausted(res == PBTBMap::PBTBResultType::PR_Exhaust);
 
-    predict_taken = (res == PrecomputedBTB::PR_Taken);
+    predict_taken = (res == PBTBMap::PBTBResultType::PR_Taken);
 
     //Result will be one of PR_Taken,PR_NotTaken,PR_Exhaust,PR_NoMatch
-    if (res == PrecomputedBTB::PR_NoMatch) {
+    if (res == PBTBMap::PBTBResultType::PR_NoMatch) {
         //???
     } else {
         // If !=NoMatch, breg should be valid

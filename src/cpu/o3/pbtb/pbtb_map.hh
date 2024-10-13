@@ -7,8 +7,8 @@
 #include "base/cprintf.hh"
 #include "base/types.hh"
 #include "cpu/inst_seq.hh"
-#include "cpu/o3/bitvec64.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
+#include "cpu/o3/pbtb/bitvec64.hh"
 
 namespace gem5
 {

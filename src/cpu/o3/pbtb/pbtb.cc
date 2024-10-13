@@ -7,7 +7,7 @@
  * CITE IT IF YOU COPY IT.
  */
 
-#include "cpu/o3/pbtb.hh" // Technically cpu.hh includes this already?
+#include "cpu/o3/pbtb/pbtb.hh" // Technically cpu.hh includes this already?
 
 #include "base/trace.hh"
 #include "cpu/inst_seq.hh"

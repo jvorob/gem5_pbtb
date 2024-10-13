@@ -7,7 +7,7 @@
  * CITE IT IF YOU COPY IT.
  */
 
-#include "cpu/o3/pbtb_map.hh"
+#include "cpu/o3/pbtb/pbtb_map.hh"
 
 #include "base/cprintf.hh"
 #include "base/trace.hh"

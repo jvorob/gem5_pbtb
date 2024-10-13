@@ -49,7 +49,7 @@
 #include "cpu/inst_seq.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
 #include "cpu/o3/limits.hh"
-#include "cpu/o3/pbtb.hh"
+#include "cpu/o3/pbtb/pbtb.hh"
 #include "sim/faults.hh"
 
 namespace gem5

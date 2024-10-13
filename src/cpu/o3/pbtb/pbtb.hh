@@ -17,9 +17,9 @@
 #include "arch/generic/pcstate.hh"
 #include "base/cprintf.hh"
 #include "cpu/inst_seq.hh"
-#include "cpu/o3/bitvec64.hh"
 #include "cpu/o3/dyn_inst_ptr.hh"
-#include "cpu/o3/pbtb_map.hh"
+#include "cpu/o3/pbtb/bitvec64.hh"
+#include "cpu/o3/pbtb/pbtb_map.hh"
 #include "cpu/static_inst.hh"
 
 // We should be importing NUM_PBTB_REGS from pbtb_map.hh

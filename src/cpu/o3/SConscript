@@ -48,9 +48,9 @@ if not env['CONF']['USE_NULL_ISA']:
     Source('lsq.cc')
     Source('lsq_unit.cc')
     Source('mem_dep_unit.cc')
-    Source('pbtb.cc') # JV PBTB
-    Source('pbtb_map.cc') # JV PBTB
-    Source('bitvec64.cc') # JV PBTB
+    Source('pbtb/pbtb.cc') # JV PBTB
+    Source('pbtb/pbtb_map.cc') # JV PBTB
+    Source('pbtb/bitvec64.cc') # JV PBTB
     Source('regfile.cc')
     Source('rename.cc')
     Source('rename_map.cc')

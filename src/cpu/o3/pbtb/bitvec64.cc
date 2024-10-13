@@ -7,10 +7,10 @@
  * CITE IT IF YOU COPY IT.
  */
 
-#include "cpu/o3/bitvec64.hh"
+#include "cpu/o3/pbtb/bitvec64.hh"
 
 #include "base/cprintf.hh"
-#include "cpu/o3/pbtb_map.hh" // just for debugPrintBottomBits?
+#include "cpu/o3/pbtb/pbtb_map.hh" // just for debugPrintBottomBits?
 
 namespace gem5
 {

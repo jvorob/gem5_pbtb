@@ -114,7 +114,7 @@ Decode::resetStage()
 
 
     // JV PBTB
-    cpu->PBTB.tracker.reset();
+    cpu->pbtb.tracker.reset();
 }
 
 std::string
@@ -244,7 +244,7 @@ Decode::checkStall(ThreadID tid) const
         // WARNING: This check is duplicated in Decode::decodeInsts(...)
         // MAKE SURE BOTH HAVE THE SAME LOGIC
 
-        if (cpu->PBTB.tracker.instNeedsToStall(tid, inst)) {
+        if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
             DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
                            "(in checkStall)\n",
                     inst->seqNum, tid);
@@ -374,7 +374,7 @@ Decode::squash(const DynInstPtr &inst, ThreadID tid)
 
 
     // PBTB: Reset the fetch stage's PBTB to the finalize one
-    cpu->PBTB.squashFinalizeToFetch();
+    cpu->pbtb.squashFinalizeToFetch();
 
     // Squash instructions up until this one
     cpu->removeInstsUntil(squash_seq_num, tid);
@@ -426,7 +426,7 @@ Decode::squash(ThreadID tid)
     }
 
     // PBTB: Reset the fetch stage's PBTB to the finalize one
-    cpu->PBTB.squashFinalizeToFetch();
+    cpu->pbtb.squashFinalizeToFetch();
 
     return squash_count;
 }
@@ -553,16 +553,16 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
 
 
     // Record bmov completions from IEW
-    for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
+    for (int i = 0; i < PBTB::NUM_REGS; i++) {
         const InstSeqNum newNum = fromIEW->iewInfo->lastExecBmovSeqNum[i];
         if (newNum != 0) {
-            cpu->PBTB.tracker.recordExecBmovFromIew(tid, newNum, i);
+            cpu->pbtb.tracker.recordExecBmovFromIew(tid, newNum, i);
         }
     }
     // If we committed this cycle then doneSeqNum will be > 0
     if (fromCommit->commitInfo[tid].doneSeqNum != 0 &&
         !fromCommit->commitInfo[tid].squash) {
-        cpu->PBTB.tracker.recordCommit(tid,
+        cpu->pbtb.tracker.recordCommit(tid,
                 fromCommit->commitInfo[tid].doneSeqNum);
     }
 
@@ -576,7 +576,7 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
         //JV PBTB: record committed inst and/or sanity check to make sure
         //         we haven't squashed in an illegal way
         //         TODO: handle undo/rollback?
-        cpu->PBTB.tracker.recordSquashFromAhead(tid, squashNum);
+        cpu->pbtb.tracker.recordSquashFromAhead(tid, squashNum);
 
         squash(tid);
 
@@ -745,7 +745,7 @@ Decode::decodeInsts(ThreadID tid)
 
         // If it's a pb or it was predicted as a pb, need to
         // make sure we're ready to finalize it
-        if (cpu->PBTB.tracker.instNeedsToStall(tid, inst)) {
+        if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
             DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
                             " (in decodeInsts)\n",
                     inst->seqNum, tid);
@@ -778,7 +778,7 @@ Decode::decodeInsts(ThreadID tid)
 
         // ==== TODO JV PBTB: count this as decoded
         // ( Note: we know it's not squashed at this point)
-        cpu->PBTB.tracker.recordDecodeInst(tid, inst);
+        cpu->pbtb.tracker.recordDecodeInst(tid, inst);
 
         ++(toRename->size);
         ++toRenameIndex;
@@ -793,19 +793,19 @@ Decode::decodeInsts(ThreadID tid)
 
         // ===== PBTB: requery the finalize pbtb
 
-        PrecomputedBTB::PBTBResultType res;
+        PBTB::PBTBResultType res;
         int      d_breg  = -1;
         uint64_t d_version = 0;
         bool     d_exhausted;
         bool     d_taken;
         Addr     d_targAddr = 0; //TODO
         //TODO: do this properly
-        res = cpu->PBTB.queryFromDecode(inst->staticInst,
+        res = cpu->pbtb.queryFromDecode(inst->staticInst,
                                         inst->pcState().instAddr(),
                                         inst->seqNum,
                                         &d_breg, &d_version, &d_targAddr);
-        d_exhausted = (res == PrecomputedBTB::PBTBResultType::PR_Exhaust);
-        d_taken = (res == PrecomputedBTB::PBTBResultType::PR_Taken);
+        d_exhausted = (res == PBTB::PBTBResultType::PR_Exhaust);
+        d_taken = (res == PBTB::PBTBResultType::PR_Taken);
 
         // ===== Also pull up the original predictions from fetch to compare
         int      f_breg      = inst->readPredBTBReg();
@@ -829,7 +829,7 @@ Decode::decodeInsts(ThreadID tid)
                     inst->seqNum, inst->isPb()?'T':'F', d_breg);
 
             debug::findFlag(std::string("PBTBVerbose"))->enable();
-            cpu->PBTB.debugDump() ; //NOTE: THIS NEEDS PBTBVerbose to print
+            cpu->pbtb.debugDump() ; //NOTE: THIS NEEDS PBTBVerbose to print
             panic("PBTB doesn't match placeholder"
                   " branch in finalize (in decode)\n");
             //TODO: change this to check pb and verify matching breg

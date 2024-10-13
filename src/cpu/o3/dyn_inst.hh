@@ -1086,33 +1086,33 @@ class DynInst : public ExecContext, public RefCounted
 
         switch(op) {
             case BMOV_OP_SRC:
-                cpu->PBTB.setSource(btb_slot, this->seqNum, addr);
+                cpu->pbtb.setSource(btb_slot, this->seqNum, addr);
                 break;
             case BMOV_OP_TGT:
-                cpu->PBTB.setTarget(btb_slot, this->seqNum, addr);
+                cpu->pbtb.setTarget(btb_slot, this->seqNum, addr);
                 break;
             case BMOV_OP_C_TAKEN:
-                cpu->PBTB.setCondition( btb_slot, this->seqNum,
-                        PrecomputedBTB::BranchType::Taken, 1);
+                cpu->pbtb.setCondition( btb_slot, this->seqNum,
+                        PBTB::BranchType::Taken, 1);
                 break;
             case BMOV_OP_C_LOOP:
-                cpu->PBTB.setCondition( btb_slot, this->seqNum,
-                        PrecomputedBTB::BranchType::LoopN, addr);
+                cpu->pbtb.setCondition( btb_slot, this->seqNum,
+                        PBTB::BranchType::LoopN, addr);
                 break;
             case BMOV_OP_C_BITS:
-                cpu->PBTB.setCondition( btb_slot, this->seqNum,
-                        PrecomputedBTB::BranchType::ShiftBit,
+                cpu->pbtb.setCondition( btb_slot, this->seqNum,
+                        PBTB::BranchType::ShiftBit,
                         addr, n);
                 break;
             case BMOV_OP_C_BITCLEAR:
                 panic("unsupported bitclear in PBTB\n");
                 // cpu->PBTB.setCondition(seqNum, btb_slot,
-                //         PrecomputedBTB::BranchType::ShiftBit_Clear, addr);
+                //         PBTB::BranchType::ShiftBit_Clear, addr);
                 break;
         }
 
         //TODO JV TEMP: for now let's just show the first 8
-        cpu->PBTB.debugDump(0, 8);
+        cpu->pbtb.debugDump(0, 8);
         return;
     }
 

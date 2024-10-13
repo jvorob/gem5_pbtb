@@ -418,7 +418,7 @@ class CPU : public BaseCPU
     Commit commit;
 
   public:
-    PrecomputedBTB PBTB; // JV PBTB
+    PBTB pbtb; // JV PBTB
 
   protected:
 

@@ -38,7 +38,7 @@ class CPU; // forward declare? Need for getting ptr to cpu
 //                    JV Bmov tracker
 //
 // ==============================================================
-class PrecomputedBTB;
+class PBTB;
 
 /**
  * One component of the PBTB? This keeps track of inflight bmovs, bmov
@@ -50,10 +50,10 @@ class PrecomputedBTB;
 class BmovTracker
 {
   public:
-    BmovTracker(const PrecomputedBTB *pbtb): pbtb(pbtb) {}
+    BmovTracker(const PBTB *pbtb): pbtb(pbtb) {}
 
   private:
-    const PrecomputedBTB *pbtb;
+    const PBTB *pbtb;
 
     InstSeqNum lastCommittedInst = 0;
 
@@ -101,7 +101,7 @@ class BmovTracker
  * FOR NOW: set synchronously at execute time (commit time?), no
  * handling for speculation/squashing
  */
-class PrecomputedBTB
+class PBTB
 {
   public:
     // TODO: for now I'll just define them all in PBTBMap and import to here,
@@ -114,7 +114,7 @@ class PrecomputedBTB
     using utype =       PBTBMap::utype;
 
   public:
-    PrecomputedBTB(CPU *_cpu): cpu(_cpu), tracker(this) {}
+    PBTB(CPU *_cpu): cpu(_cpu), tracker(this) {}
 
 
     /** Returns the name of PBTB (for DPRINTF?) */
@@ -298,7 +298,7 @@ pmap {
     void debugDump(int regstart, int regstop);
 
 
-}; // class PrecomputedBTB
+}; // class PBTB
 
 } // namespace o3
 } // namespace gem5

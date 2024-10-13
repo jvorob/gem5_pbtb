@@ -149,7 +149,7 @@ struct TimeStruct
         // NOTE: should only every have one bmov executing per breg,
         // since bmovs within a breg are serialized?
         // Alternatively, could send back a count of executed bmovs per breg?
-        InstSeqNum lastExecBmovSeqNum[PrecomputedBTB::NUM_REGS];
+        InstSeqNum lastExecBmovSeqNum[PBTB::NUM_REGS];
 
         unsigned dispatched;
         bool usedIQ;

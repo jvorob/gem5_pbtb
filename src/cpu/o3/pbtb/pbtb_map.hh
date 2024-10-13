@@ -30,7 +30,7 @@ class PBTBMap
   public:
 
   // Friends:
-  friend class PrecomputedBTB;
+  friend class PBTB;
 
 // ==============================================================
 //

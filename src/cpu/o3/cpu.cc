@@ -86,7 +86,7 @@ CPU::CPU(const BaseO3CPUParams &params)
       iew(this, params),
       commit(this, params),
 
-      PBTB(this), // JV PBTB
+      pbtb(this), // JV PBTB
 
       regFile(params.numPhysIntRegs,
               params.numPhysFloatRegs,

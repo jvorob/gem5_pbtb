@@ -303,8 +303,8 @@ class Decode
     bool isPBReadyToFinalize(DynInstPtr inst) const;
 
     //state (per-breg):
-    InstSeqNum lastDecodedBmov[PrecomputedBTB::NUM_REGS];
-    InstSeqNum lastExecBmovFromIEW[PrecomputedBTB::NUM_REGS];
+    InstSeqNum lastDecodedBmov[PBTB::NUM_REGS];
+    InstSeqNum lastExecBmovFromIEW[PBTB::NUM_REGS];
     //TODO: remove these last two once bmov is debugged
     InstSeqNum lastDecodedInst;
     InstSeqNum lastDoneFromCommit;

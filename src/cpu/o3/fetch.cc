@@ -510,7 +510,7 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     int breg = -1;
     uint64_t version = 0;
 
-    res = cpu->PBTB.queryFromFetch(inst->staticInst, next_pc, &breg, &version);
+    res = cpu->pbtb.queryFromFetch(inst->staticInst, next_pc, &breg, &version);
 
     // Apply pred flags to see if we mispredicted later
     inst->setPredBTBReg(breg);

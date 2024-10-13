@@ -53,7 +53,7 @@ const std::string debugPrintBottomBits(
 void BmovTracker::reset() {
     lastCommittedInst   = 0;
 
-    for (int i = 0; i < PrecomputedBTB::NUM_REGS; i++) {
+    for (int i = 0; i < PBTB::NUM_REGS; i++) {
         lastExecBmov[i] = 0;
         lastDecBmov[i] = 0;
         lastDecNonBitBmov[i] = 0;
@@ -89,7 +89,7 @@ void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
         // sanity check, we should never be re-decoding an earlier bmov?
         // (even if we squash, seq nums should increase)
         assert(inst->seqNum > lastDecBmov[breg]);
-        assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+        assert(breg >= 0 && breg < PBTB::NUM_REGS);
         lastDecBmov[breg] = inst->seqNum;
 
         if (nonbit) {
@@ -107,7 +107,7 @@ void BmovTracker::recordExecBmovFromIew(ThreadID tid,
     // NOTE: these should always be increasing, since bmovs for the
     // same branch reg are executed serially
     assert( bmovSeq > lastExecBmov[breg] );
-    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+    assert(breg >= 0 && breg < PBTB::NUM_REGS);
     lastExecBmov[breg] = bmovSeq;
 }
 
@@ -130,7 +130,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
 
     //TODO: this is unfinished
 
-    for (int bi = 0; bi < PrecomputedBTB::NUM_REGS; bi++) {
+    for (int bi = 0; bi < PBTB::NUM_REGS; bi++) {
         // young insts (high seqnum) are squashed away
 
         // If we don't have any insts, don't worry about it
@@ -217,7 +217,7 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
     }
 
     int breg = inst->staticInst->srcRegIdx(0);
-    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+    assert(breg >= 0 && breg < PBTB::NUM_REGS);
 
 
     DPRINTF(Decode,"[tid:X] BmovTracker::instNeedsToStall [sn:%d] breg=%d, "
@@ -256,14 +256,14 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
 // ==============================================================
 //
 
-std::string PrecomputedBTB::name() const {
+std::string PBTB::name() const {
     return cpu->name() + ".pbtb";
 }
 
 
 // TODO: we used to do all the printing from here, but not PBTBMap handles it
 // should this be removed?
-void PrecomputedBTB::debugDump(int regstart, int regstop) {
+void PBTB::debugDump(int regstart, int regstop) {
     const int which_map = 0; // NOTE: change this manually when testing
                              // If you need to see the other map
     PBTBMap *mapsToPrint[] = {&map_fetch, &map_final};
@@ -272,10 +272,10 @@ void PrecomputedBTB::debugDump(int regstart, int regstop) {
     curr_map->debugDump();
 }
 
-void PrecomputedBTB::debugDump() { debugDump(0, NUM_REGS); }
+void PBTB::debugDump() { debugDump(0, NUM_REGS); }
 
 
-void PrecomputedBTB::savePrevState(int breg, InstSeqNum seqnum,
+void PBTB::savePrevState(int breg, InstSeqNum seqnum,
                                    undo_action undo) {
     struct undo_entry undo_entry =
     {
@@ -334,7 +334,7 @@ std::string PBTBMap::bdataToString(const struct breg_data &bdata) {
 }
 
 // undoes back to and including squashingSeqNum
-void PrecomputedBTB::unwindSquash(InstSeqNum squashingSeqNum) {
+void PBTB::unwindSquash(InstSeqNum squashingSeqNum) {
     DPRINTF(PBTB, "PBTB: Unwinding to inst [sn:%d]\n", squashingSeqNum);
     while (!undo_stack.empty()) {
         struct undo_entry curr = undo_stack.back();
@@ -355,18 +355,18 @@ void PrecomputedBTB::unwindSquash(InstSeqNum squashingSeqNum) {
 
 
 // == Each of these should correspond to one bmov instruction
-void PrecomputedBTB::setSource(int breg, InstSeqNum seqnum, Addr source_addr) {
+void PBTB::setSource(int breg, InstSeqNum seqnum, Addr source_addr) {
     map_fetch.setSource(breg, source_addr);
     auto undo = map_final.setSource(breg, source_addr);
     savePrevState(breg, seqnum, undo);
 }
-void PrecomputedBTB::setTarget(int breg, InstSeqNum seqnum, Addr target_addr) {
+void PBTB::setTarget(int breg, InstSeqNum seqnum, Addr target_addr) {
     //savePrevState(breg, seqnum);
     map_fetch.setTarget(breg, target_addr);
     auto undo = map_final.setTarget(breg, target_addr);
     savePrevState(breg, seqnum, undo);
 }
-void PrecomputedBTB::setCondition(int breg, InstSeqNum seqnum,
+void PBTB::setCondition(int breg, InstSeqNum seqnum,
                     BranchType conditionType, uint64_t val, int64_t n) {
     //savePrevState(breg, seqnum);
     map_fetch.setCondition(breg, conditionType, val, n);
@@ -376,13 +376,13 @@ void PrecomputedBTB::setCondition(int breg, InstSeqNum seqnum,
 
 // Just an alias for the previous one
 // We only use n for the ShiftBit branch type, so can omit it otherwise
-void PrecomputedBTB::setCondition(int breg, InstSeqNum seqnum,
+void PBTB::setCondition(int breg, InstSeqNum seqnum,
                     BranchType conditionType, uint64_t val) {
     setCondition(breg, seqnum, conditionType, val, 0);
 }
 
 
-void PrecomputedBTB::squashFinalizeToFetch() {
+void PBTB::squashFinalizeToFetch() {
     DPRINTF(PBTB, "PBTB: Overwriting fetch PBTB from finalize\n");
     // TODO: logging to both debug flags for now??
     DPRINTF(Decode, "PBTB: Overwriting fetch PBTB from finalize\n");
@@ -401,7 +401,7 @@ void PrecomputedBTB::squashFinalizeToFetch() {
     * @param p_version_out version for breg is passed back here
     * @return Returns PBTBResultType for T, NT, Exhausted, and NoMatch
     */
-PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
+PBTB::PBTBResultType PBTB::queryFromFetch(
             const StaticInstPtr inst, PCStateBase &pc_inout,
             int *p_breg_out, uint64_t *p_version_out) {
 
@@ -435,7 +435,7 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromFetch(
 //Passthrough, queries the finalize/decode version of the map
 //NOTE: if not taken, will use inst to instead advance targetAddr_out
 //to nextPc
-PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
+PBTB::PBTBResultType PBTB::queryFromDecode(
             const StaticInstPtr inst,  Addr pcAddr, InstSeqNum seqnum,
             int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
 
@@ -470,7 +470,7 @@ PrecomputedBTB::PBTBResultType PrecomputedBTB::queryFromDecode(
 // TODO: this is very specific to what's needed for
 //       BmovTracker::instNeedsToStall, might be useful later to break it up
 //       into a `isBregReady` and a `getBregType`
-bool PrecomputedBTB::isBregBitTypeAndReady(int breg) const {
+bool PBTB::isBregBitTypeAndReady(int breg) const {
     // breg must already be bit-type, and must not be exhausted
     if (map_final.cond_type[breg] == BranchType::ShiftBit
         && map_final.cond_aux_val[breg] > 0) {
@@ -483,18 +483,18 @@ bool PrecomputedBTB::isBregBitTypeAndReady(int breg) const {
 //bool PBTBMap::pbCouldModifyState(int breg) const
 //{
 //    if (breg < 0) { return false; }
-//    assert(breg >= 0 && breg < PrecomputedBTB::NUM_REGS);
+//    assert(breg >= 0 && breg < PBTB::NUM_REGS);
 //
 //    // TODO: technically we don't care if branch is exhausted?
 //    //       but that shouldn't matter since that only happens in exceptions,
 //    switch ( map_final.cond_type[breg] ) {
-//        case PrecomputedBTB::BranchType::LoopN:
-//        case PrecomputedBTB::BranchType::ShiftBit:
+//        case PBTB::BranchType::LoopN:
+//        case PBTB::BranchType::ShiftBit:
 //            return true;
-//        case PrecomputedBTB::BranchType::NoBranch:
-//        case PrecomputedBTB::BranchType::Taken:
+//        case PBTB::BranchType::NoBranch:
+//        case PBTB::BranchType::Taken:
 //            return false;
-//        case PrecomputedBTB::BranchType::ShiftBit_Clear:
+//        case PBTB::BranchType::ShiftBit_Clear:
 //            panic("ShiftBit_Clear is not a valid branchtype");
 //    }
 //    panic("Oops, unexpected switch val");

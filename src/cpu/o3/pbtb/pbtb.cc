@@ -277,30 +277,99 @@ void PBTB::debugDump() { debugDump(0, NUM_REGS); }
 
 void PBTB::savePrevState(int breg, InstSeqNum seqnum,
                                    undo_action undo) {
-    struct undo_entry undo_entry =
+    struct undo_entry NEW =
     {
         .seqnum = seqnum,
         .action = undo,
     };
+    assert(undo.breg == breg);
 
     //TODO: don't print undo stuff for now
-    DPRINTF(PBTB, "Current undo stack:\n");
-    for (const auto &entry : undo_stack) {
+    DPRINTF(PBTB, "Current undo stack for b%d:\n", breg);
+    for (const auto &entry : undo_stacks[breg]) {
         DPRINTF(PBTB, "- %s\n", undoEntryToString(entry));
     };
 
-    DPRINTF(PBTB, "saving to undo stack: %s\n",
-        undoEntryToString(undo_entry));
+    DPRINTF(PBTB, "saving to undo stack for breg %d: NEW=%s\n",
+        breg, undoEntryToString(NEW));
 
 
-    // actions should arrive in order
-    //assert(undo_stack.empty() || undo_stack.back().seqnum < seqnum);
-    // TODO TEMP: we need to allow out-of-order if theyre in diff bregs,
-    //            or same-breg but push/pop (same version)
-    if (!( undo_stack.empty() || undo_stack.back().seqnum < seqnum )) {
-        DPRINTF(PBTB, "WARNING: out-of-order undo-entries, NOT FINISHED\n");
+    // Now: The seqnum of the undo-entry we're adding might be lower than the
+    // one on top of stack e.g:
+    //      TOS:    pb (sn:7, applied in Decode/finalize)
+    //      adding: bmov (sn:4, executed in IEW).
+    // This can happen because a pb can operate on precomputed bits,
+    // so can occur without stalling for the
+    // bmov, even though the bmov came first in code order / seqnum
+    //
+    // However, we want our undo stacks to be in seqnum order, so that we can
+    // safely undo to a specific seqnum when squashing.
+    //
+    // To keep our stacks in seqnum order, we will insert new undo entries
+    // BELOW THE TOP OF THE STACK (TOS), but only if they are reorderable, i.e.
+    // pbs consuming bits from a SHIFTBIT breg, or bmovs pushing bits to
+    // a SHIFTBIT breg (NOTE: NOT bmovs initializing a SHIFTBIT, since that
+    // clears the breg). We make sure they're safely reorderable
+    // - NEW is undoing a bit-append bmov (type UNPUSH_BITS) and TOS is a pb
+    //      (TYPE UNPOP_BITS). We can only safely reorder a pb and bmov, since
+    //      that preserves the relative orderings of pbs and bmovs.
+    //      Also, we should never have a bmov executing too early, so don't
+    //      need to check NEW=pb, TOS=bmov.
+    // - The version number is the same between TOS/NEW, and done/undone_ver
+    //     ( this makes sure we're consuming/pushing to THE SAME VERSION of a
+    //        given breg, not just that the breg happened to be reused )
+    // - NEW is from an older (smaller) seqnum than TOS (i.e. it should have
+    //       happened earlier in code order)
+
+    // If we don't meet the above criteria, then NEW.seqnum must be >TOS.seqnum
+
+    // Aim to insert at end, but if we find the seqnums are not increasing,
+    // walk backwards until we find a seqnum < than us
+    auto rit = undo_stacks[breg].rbegin();
+    while (rit != undo_stacks[breg].rend())  {
+        auto NOS = *rit; // next on stack
+
+        // when we insert, we can insert at insert(rit.base()), which
+        // will insert ABOVE the current element
+
+        //          begin                 end
+        //  (NULL)? 1      2      3       (NULL?)
+        //  rend                  rbegin
+        //                                rbegin.base(), // inserts before null
+        //                        // or equivalently, AFTER *rbegin()==3
+
+        if (NOS.seqnum < seqnum) { // in order, all good
+            break;
+        } else {
+            // NOS is a more recent inst, we need to insert NEW below it
+            DPRINTF(PBTB, "UNDO REORDER: putting new [sn:%d] under [sn:%d]\n",
+                NEW.seqnum, NOS.seqnum);
+
+            // Check if it's safe to reorder
+            assert(NOS.action.type == utype::U_UNPOP_BITS); // NOS is early pb
+            assert(NEW.action.type == utype::U_UNPUSH_BITS); // curr is bmov
+            assert(NOS.seqnum > NEW.seqnum); // curr is earlier in code order
+
+            auto ver = NEW.action.done_ver; // all versions should
+            assert(NEW.action.done_ver == ver);      // match up (bitqueue ops)
+            assert(NEW.action.undone_ver == ver);    // don't increment version
+            assert(NOS.action.done_ver == ver);
+            assert(NOS.action.undone_ver == ver);
+
+
+            // If wer'e her, it's safe to reorder, advance by one
+            rit++;
+        }
     }
-    undo_stack.push_back(undo_entry);
+    // rit should now be the place to insert at
+    // (e.g. if array empty, rit == rend(), so insert at rend.base() == end())
+    // (e.g. if just pushing to top of undo stack, rit == rbegin(),
+    //       so rit.base() == end(), so will insert at end)
+    // (e.g. if we walked to some element X and then broke out, *rit is X,
+    //       so rit.base() is after X, so we will insert after X)
+
+
+    undo_stacks[breg].insert(rit.base(), NEW);
 }
 
 std::string PBTBMap::bdataToString(const struct breg_data &bdata) {
@@ -336,15 +405,21 @@ std::string PBTBMap::bdataToString(const struct breg_data &bdata) {
 // undoes back to and including squashingSeqNum
 void PBTB::unwindSquash(InstSeqNum squashingSeqNum) {
     DPRINTF(PBTB, "PBTB: Unwinding to inst [sn:%d]\n", squashingSeqNum);
-    while (!undo_stack.empty()) {
-        struct undo_entry curr = undo_stack.back();
-        if (curr.seqnum >= squashingSeqNum) {
-            DPRINTF(PBTB, "PBTB: undoing PBTB op [sn:%d], b%d\n",
-                squashingSeqNum, curr.action.breg);
-            // TODO:
-            panic("breg undo not implemented");
-            //breg_set(&map_final, curr.breg, &curr.prev_state);
-            undo_stack.pop_back();
+
+    for (int breg = 0; breg < NUM_REGS; breg++) {
+        auto curr_stack = undo_stacks[breg];
+
+        while (!curr_stack.empty()) {
+            struct undo_entry curr = curr_stack.back();
+            if (curr.seqnum >= squashingSeqNum) {
+                DPRINTF(PBTB, "PBTB: (b%d) undoing PBTB op [sn:%d], b%d\n",
+                    breg, squashingSeqNum, curr.action.breg);
+
+
+                // Do the undo?
+                map_final.apply_undo(curr.action);
+                curr_stack.pop_back();
+            }
         }
     }
 }

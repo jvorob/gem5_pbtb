@@ -93,13 +93,8 @@ PBTBMap::undo_action PBTBMap::setSource(
                                  int breg, Addr source_addr) {
     assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
 
-    undo_action retval = { // return previous value as undo
-        .breg = breg,
-        .undone_ver = version[breg],
-        .done_ver = version[breg]+1,
-        .type = utype::U_FULL,
-        .as_overwrite = breg_get(breg),
-    };
+    // store / return prev val as undo
+    undo_action ret_undo = makeUndoFull(breg);
 
     source[breg] = source_addr;
     version[breg]++; //TODO: set this to seqNum instead
@@ -109,18 +104,14 @@ PBTBMap::undo_action PBTBMap::setSource(
     cond_val[breg]     = 0;
     cond_aux_val[breg] = 0;
 
-    return retval;
+    return ret_undo;
 }
 PBTBMap::undo_action PBTBMap::setTarget(
                                  int breg, Addr target_addr) {
     assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
-    undo_action retval = { // return previous value as undo action
-        .breg = breg,
-        .undone_ver = version[breg],
-        .done_ver = version[breg]+1,
-        .type = utype::U_FULL,
-        .as_overwrite = breg_get(breg),
-    };
+
+    // store / return prev val as undo
+    undo_action ret_undo = makeUndoFull(breg);
 
     target[breg] = target_addr;
     version[breg]++; //TODO: set this to seqNum instead
@@ -130,7 +121,7 @@ PBTBMap::undo_action PBTBMap::setTarget(
     cond_val[breg]     = 0;
     cond_aux_val[breg] = 0;
 
-    return retval;
+    return ret_undo;
 }
 
 // Sets the condition for a breg in a pmap
@@ -146,13 +137,7 @@ PBTBMap::undo_action PBTBMap::setCondition(
 
     // Save prev value for undo-action
     // (if we only do a partial edit, we'll save something else)
-    undo_action ret_undo = { // return previous value as undo action
-        .breg = breg,
-        .undone_ver = version[breg],
-        .done_ver = version[breg]+1,
-        .type = utype::U_FULL,
-        .as_overwrite = breg_get(breg),
-    };
+    undo_action ret_undo = makeUndoFull(breg);
 
     assert(breg >= 0 && breg < NUM_REGS); //breg should be 0-31
     switch (conditionType) {
@@ -183,16 +168,9 @@ PBTBMap::undo_action PBTBMap::setCondition(
             } else {
                 // if we're only appending, return a partial undo action
                 // so we can re-order it with pb consumes
-                ret_undo.type = utype::U_UNPUSH_BITS;
-                ret_undo.done_ver = ret_undo.undone_ver; // ver doesn't change
-                ret_undo.as_pushed_bits = 1;
+                ret_undo = makeUndoPushN(breg, 1);
             }
             cond_type[breg]    = BranchType::ShiftBit;
-
-            //if (conditionType == ShiftBit_Clear) { //clear fifo
-            //    cond_val[breg]     = 0; // bits
-            //    cond_aux_val[breg] = 0; // num_bits
-            //}
 
             // TODO: is there any reason to shift in 0 bits?
             // Maybe as a way to clear it?
@@ -327,13 +305,7 @@ PBTBMap::PBTBResultType PBTBMap::queryPC( Addr pcAddr,
 PBTBMap::undo_action PBTBMap::consumeIter(int breg)
 {
     // Default our undo action to no change
-    undo_action ret_undo = {
-        .breg = breg,
-        .undone_ver = version[breg],
-        .done_ver = version[breg],  // consuming doesn't change version
-        .type = utype::U_NONE,
-        .as_pushed_bits = 0, // shut up the type checker
-    } ;
+    undo_action ret_undo = makeUndoBlank(breg);
 
     if (breg == -1) { return ret_undo; }
     assert(breg >= 0 && breg < PBTBMap::NUM_REGS);
@@ -345,8 +317,9 @@ PBTBMap::undo_action PBTBMap::consumeIter(int breg)
     } else if (brType == BranchType::LoopN) {
         if (cond_val[breg] >= 0) { // if not exhausted
             // we could do this fancier, but for now just do a full undo
-            ret_undo.type = utype::U_FULL;
-            ret_undo.as_overwrite = breg_get(breg);
+            ret_undo = makeUndoFull(breg);
+            // NOTE: loop pb doesn't change version, need to handle that
+            ret_undo.done_ver = version[breg];
 
             cond_val[breg]--; // iterations--
         }
@@ -354,9 +327,8 @@ PBTBMap::undo_action PBTBMap::consumeIter(int breg)
     } else if (brType == BranchType::ShiftBit) {
         if (cond_aux_val[breg] > 0) { // if not exhausted
             // pb is consuming a bit: undo action is unconsuming it
-            ret_undo.type = utype::U_UNPOP_BITS;
             bool bit = cond_val[breg] & 1;
-            ret_undo.as_consumed_bits = BitVec64{bit}; // only 1 bit?
+            ret_undo = makeUndoConsumeBits(breg, BitVec64{bit});
 
             cond_val[breg] >>= 1; // shift bits down 1
             cond_aux_val[breg]--; // num_bits--
@@ -367,6 +339,51 @@ PBTBMap::undo_action PBTBMap::consumeIter(int breg)
     }
 
     return ret_undo;
+}
+
+void PBTBMap::apply_undo(struct undo_action und) {
+    DPRINTF(PBTB, "PBTBMap (%s), Undoing: %s\n",
+                dbgId, undoActionToString(und));
+
+    // We can only apply it if the versions match
+    assert(version[und.breg] == und.done_ver);
+
+    switch (und.type) {
+    case utype::U_FULL:
+        breg_set(und.breg, &und.as_overwrite);
+        break;
+    case utype::U_UNPOP_BITS: {
+        // we're undoing a pb consume, so we need to push it back
+        assert(cond_type[und.breg] == BranchType::ShiftBit);
+        assert(und.done_ver == und.undone_ver);
+        BitVec64 bits = und.as_consumed_bits;
+        assert(bits.size() + cond_aux_val[und.breg] <= 64);
+
+        cond_val[und.breg] = (cond_val[und.breg] << bits.size())
+                              | bits.get_data();
+        break;
+    }
+    case utype::U_UNPUSH_BITS: {
+        // we're undoing a bit push, trim n bits from end,
+        assert(cond_type[und.breg] == BranchType::ShiftBit);
+        assert(und.done_ver == und.undone_ver);
+        int n = und.as_pushed_bits;
+
+        // put the value into a bitvec, for ease of operating
+        BitVec64 tmp = BitVec64(cond_aux_val[und.breg], cond_val[und.breg]);
+        assert(n <= 64);
+        for (int i = 0; i < n; i++) { tmp.pop_back(); }
+        cond_aux_val[und.breg] = tmp.size();
+        cond_val[und.breg] = tmp.get_data();
+        break;
+    }
+    case utype::U_NONE:
+        break;
+    }
+
+    version[und.breg] = und.undone_ver;
+    DPRINTF(PBTB, "PBTBMap (%s), breg is now: %sn",
+                dbgId, bdataToString(breg_get(und.breg)));
 }
 
 

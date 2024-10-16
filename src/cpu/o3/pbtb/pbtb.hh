@@ -129,59 +129,6 @@ class PBTB
 
   public:
     BmovTracker tracker;
-  private:
-    // ================================================================
-    //
-    //                         PBTB MAPS
-    //
-    // ================================================================
-    // Each of these is a single pbtb_map
-    // (i.e. 1 for decode, 1 for finalize, etc)
-    // TODO: maybe put these in their own class?
-
-    //Each checkpoint stores all this data
-    struct pbtb_map
-    {
-        //InstSeqNum seqNum; //The branch inst that started this checkpoint
-        int64_t    version[NUM_REGS]; // ++ each time this breg is modified.
-                                      // (except for bmovc_bit, if appending)
-        Addr       source[NUM_REGS]; // All addresses are absolute
-        Addr       target[NUM_REGS];
-        BranchType cond_type[NUM_REGS];  //defaults to NoBranch
-        int64_t   cond_val[NUM_REGS];
-        int64_t   cond_aux_val[NUM_REGS]; //for shiftreg, counts number
-                                                    //of bits held
-    };
-
-
-    // ================================================================
-    //
-    //                         UNDO STATES
-    //
-    // ================================================================
-    // We need to be able to squash instructions that modify the map_final pmap
-    // Most bmovs can be undone by simply reverting to the previous pbtb state
-    // (for bmovs that can't be interleaved, e.g. that update the version)
-    //   However we must also be able to undo bit-pushes and bit-consumes
-    // individually, as they can be interleaved (bit-type bmovs or pbs).
-    //   To support this, an undo_entry for a breg holds an undo_state, which
-    // can be either a full breg's data (for overwriting), or a partial
-    // undo-state (specifying which bits were consumed, or how many bits were
-    // pushed)
-
-    // Stores the state of a single breg: not used in pbtb_map, but used
-    // for stashing/passing around full value of a single breg in undo history
-/*
-pmap {
-  PmapAction // action applied to a single struct pbtb_map
-  PBTBAction // action applied to the pbtb (fetch vs decode, )
-
-  UndoToken applyAction(PBTBAction) {
-  }
-}
-*/
-
-  public:
 
   private:
     // ================ UNDO ACTIONS
@@ -193,32 +140,14 @@ pmap {
     };
 
     static std::string undoEntryToString(const struct undo_entry &ent) {
-        std::string prev_str; // descriptor of what will be undone
-        switch(ent.action.type) {
-          case utype::U_FULL:
-              prev_str = csprintf("prev state: %s",
-                  PBTBMap::bdataToString(ent.action.as_overwrite));
-              break;
-          case utype::U_UNPOP_BITS:
-              prev_str = csprintf("pb had consumed: fst<%s>lst",
-                  ent.action.as_consumed_bits.toString());
-              break;
-          case utype::U_UNPUSH_BITS:
-              prev_str = csprintf("bmov had pushed %d bits",
-                  ent.action.as_pushed_bits);
-              break;
-          case utype::U_NONE:
-              prev_str = csprintf("noop");
-              break;
-        }
-
-        std::string v_str; // describes version (either v->v, or just v+);
-        v_str = csprintf("v%d->v%d",
-            ent.action.undone_ver, ent.action.done_ver);
-
-        return csprintf("UNDO entry [sn:%d]: b%d %s (%s)",
-            ent.seqnum, ent.action.breg, v_str, prev_str);
+        return csprintf("UNDO entry [sn:%d]: %s",
+            ent.seqnum, PBTBMap::undoActionToString(ent.action));
     };
+
+    // Store undo history for each breg separately
+    // Within a single breg's undo stack, undo_entries should be stored in
+    // seqnum order (oldest to newest).
+     std::vector<struct undo_entry> undo_stacks[NUM_REGS];
 
     // ==================== PBTB Maps:
     // If the system wasn't pipelined, one of these would be sufficient
@@ -229,8 +158,6 @@ pmap {
     // Note: map_fetch and map_finalize should ONLY EVER DIFFER in number
     // of loop iterations / shifted bits. All other modifications should apply
     // simultaneously to both. map_commit (once it's in) might differ though
-
-    std::vector<struct undo_entry> undo_stack;
 
     // ========= UNDO STUFF
     // Any methods that modify a pmap should return an undo_action, which

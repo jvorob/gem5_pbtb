@@ -44,6 +44,9 @@ class BitVec64
         // true means this can hold at least n more bits
         bool has_capacity(int n) { return (n + num_valid) <= capacity; }
 
+        // forcibly mask off bottom n bits to make sure we have good data
+        uint64_t get_data() { return data & ((1LL << size()) - 1); }
+
         // i must be already within the size of the vector
         bool at(int i);
         void write_bit(int i, bool is_set );

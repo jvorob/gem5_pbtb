@@ -452,10 +452,7 @@ IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
     DPRINTF(IEW, "[tid:%i] Memory violation, squashing violator and younger "
             "insts, PC: %s [sn:%llu].\n", tid, inst->pcState(), inst->seqNum);
 
-    // //TODO JV: PBTB doesn't yet handle exceptions (squash in IEW)
-    // // when we encounter memorder violations, we'll need to force
-    // them to stall until commit, then do our reload-pbtb-from-commit strat
-    panic("JV PBTB Doesn't handle squashing from memorder in IEW!\n");
+    // //TODO JV: PBTB is a WIP in for handling squashes: let's allow this
 
     // Need to include inst->seqNum in the following comparison to cover the
     // corner case when a branch misprediction and a memory violation for the
@@ -1357,7 +1354,15 @@ IEW::executeInsts()
                 squashDueToMemOrder(violator, tid);
 
                 ++iewStats.memOrderViolationEvents;
+
+            } else if ((inst->seqNum % 10) == 0) { // TODO JV TEMP DEBUG
+                // MANUALLY FORCE A SQUASH roughly 1/100 of the time to verify
+                // squash logic is correct
+                DPRINTF(PBTB, "JV DEBUG !!!!: IEW Triggering manual squash"
+                            " on inst [sn:%d]\n", inst->seqNum);
+                squashDueToMemOrder(inst, tid);
             }
+
         } else {
             // Reset any state associated with redirects that will not
             // be used.

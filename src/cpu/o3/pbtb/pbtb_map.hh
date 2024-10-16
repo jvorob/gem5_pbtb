@@ -106,6 +106,24 @@ class PBTBMap
       U_UNPOP_BITS, // arg(bit), used to undo pb
     };
 
+    // ================================================================
+    //
+    //                         UNDO STATES
+    //
+    // ================================================================
+    // We need to be able to squash instructions that modify the map_final pmap
+    // Most bmovs can be undone by simply reverting to the previous pbtb state
+    // (for bmovs that can't be interleaved, i.e. ones that update the version)
+    //   However we must also be able to undo bit-pushes and bit-consumes
+    // individually, as they can be interleaved (bit-type bmovs or pbs).
+    //   To support this, an undo_entry for a breg holds an undo_state, which
+    // can be either a full breg's data (for overwriting), or a partial
+    // undo-state (specifying which bits were consumed, or how many bits were
+    // pushed)
+
+    // Stores the state of a single breg: not used in pbtb_map, but used
+    // for stashing/passing around full value of a single breg in undo history
+
     struct undo_action
     {
         int breg;
@@ -119,6 +137,63 @@ class PBTBMap
             int as_pushed_bits;
         };
     };
+
+    // ===========  Undo constructors:  ===================
+
+    // Overwrite: assumes version++, reverts to current state
+    // (should be called before modifying state so it can save it)
+    undo_action makeUndoFull(int breg) {
+        struct undo_action ret_undo =
+        {
+            .breg = breg,
+            .undone_ver = this->version[breg],
+            .done_ver = this->version[breg] + 1,
+            .type = utype::U_FULL,
+            .as_overwrite = this->breg_get(breg),
+        };
+        return ret_undo;
+    }
+
+    // Push_bits: assumes no version change, reverts by discarding n bits
+    undo_action makeUndoPushN(int breg, int n) {
+        struct undo_action ret_undo =
+        {
+            .breg = breg,
+            .undone_ver = this->version[breg],
+            .done_ver   = this->version[breg], // ver doesn't change
+            .type = utype::U_UNPUSH_BITS,
+            .as_pushed_bits = n,
+        };
+        return ret_undo;
+    }
+
+    // Consume_bits: assumes no version change
+    // Reverts by pushing the n bits we had consumed (at front)
+    undo_action makeUndoConsumeBits(int breg, BitVec64 consumed_bv) {
+        struct undo_action ret_undo =
+        {
+            .breg = breg,
+            .undone_ver = this->version[breg],
+            .done_ver   = this->version[breg], // ver doesn't change
+            .type = utype::U_UNPOP_BITS,
+            .as_consumed_bits = consumed_bv,
+        };
+        return ret_undo;
+    }
+
+    // No-op (let's set version correctly so it doesn't crash
+    //         even if we don't handle it)
+    undo_action makeUndoBlank(int breg) {
+        struct undo_action ret_undo =
+        {
+            .breg = breg,
+            .undone_ver = this->version[breg],
+            .done_ver   = this->version[breg], // ver doesn't change
+            .type = utype::U_NONE,
+            .as_pushed_bits = 0, // shut up the type checker
+        };
+        return ret_undo;
+    }
 
     static std::string undoActionToString(const struct undo_action &und) {
         std::string prev_str; // descriptor of what will be undone
@@ -160,12 +235,13 @@ class PBTBMap
   private:
 
     // Member data fields
-    int64_t    version      [NUM_REGS];
-    Addr       source       [NUM_REGS];
-    Addr       target       [NUM_REGS];
-    BranchType cond_type    [NUM_REGS];
-    int64_t    cond_val     [NUM_REGS];
-    int64_t    cond_aux_val [NUM_REGS];
+    int64_t    version      [NUM_REGS] = {};
+    Addr       source       [NUM_REGS] = {};
+    Addr       target       [NUM_REGS] = {};
+    BranchType cond_type    [NUM_REGS] = {};
+    int64_t    cond_val     [NUM_REGS] = {};
+    int64_t    cond_aux_val [NUM_REGS] = {};
+    struct breg_data bregs[NUM_REGS];
 
 
   private:
@@ -175,6 +251,12 @@ class PBTBMap
     //UndoToken applyAction(PBTBAction action); w
 
   public:
+    PBTBMap() {
+        for (int i = 0; i <NUM_REGS; i++) {
+            cond_type[i] = BranchType::NoBranch;
+            version[i] = -1;
+        }
+    }
 
     void setFrom(const PBTBMap &other) {
         for (int i = 0; i < NUM_REGS; ++i) {
@@ -248,7 +330,7 @@ class PBTBMap
     // Also: push_bits and consume_bits can always be reordered so that
     // they are undone in reverse sequence-number order
     // (can't reorder arbitrarily, might overflow the bitvec)
-    void m_apply_undo(struct pbtb_map *pmap, undo_action undo);
+    void apply_undo(undo_action undo);
 
     //=========== Pretty printing
     void debugDump();

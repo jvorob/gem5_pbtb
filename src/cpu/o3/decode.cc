@@ -577,6 +577,7 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
         //         we haven't squashed in an illegal way
         //         TODO: handle undo/rollback?
         cpu->pbtb.tracker.recordSquashFromAhead(tid, squashNum);
+        cpu->pbtb.unwindSquash(squashNum);
 
         squash(tid);
 

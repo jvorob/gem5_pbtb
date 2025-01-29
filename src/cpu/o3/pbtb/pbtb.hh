@@ -68,9 +68,28 @@ class BmovTracker
     InstSeqNum lastDecMutPb = 0;
 
 
+    // === New tracker: shadows the ROB: keeps track of all decoded insts:
+    struct tracker_entry
+    {
+      // not sure if I can keep ptrs to the actual insts, but
+      // I'll keep copies of the info
+      InstSeqNum seqNum;
+      bool isBmov;
+      bool isBitBmov;
+      bool isPb; // TODO: unneeded?
+      bool isExecuted;
+      bool isSquashed;
+      int breg;
+    };
+
+    // numbering will be in the same direction as seqnum order,
+    // so newly decoded insts will be inserted at end, and committed
+    // insts will be dropped from start
+    std::vector<struct tracker_entry> allFlyingBmovs;
+
+
   public:
     void reset(); //clear out all state
-
 
     // ============ tracking functions ( should be set in appropriate places
     void recordDecodeInst       (ThreadID tid, DynInstConstPtr inst);
@@ -84,6 +103,9 @@ class BmovTracker
     // ============ Query Functions
     // if is pb or predicted-as-pb, need to stall for finalize
     bool instNeedsToStall(ThreadID tid, DynInstConstPtr inst) const;
+
+    // Prints out all in-flight bmovs
+    void debugDump();
 };
 
 
@@ -178,7 +200,9 @@ class PBTB
     // Given an undo action and the seqnum, records it onto the history
     // TODO: accept 0 or more undo_actions?
     void savePrevState(int breg, InstSeqNum seqnum, undo_action undo);
-    // undoes back to and including squashingSeqNum
+
+  public:
+    // undoes back to (but not including) squashingSeqNum
     void unwindSquash(InstSeqNum squashingSeqNum);
 
   public:
@@ -223,6 +247,9 @@ class PBTB
     void debugDump();
     // Limits which regs to print (to limit output). Inclusive/exclusive
     void debugDump(int regstart, int regstop);
+
+    void debugDumpUndo(int breg); //prints out undo actions for given breg
+    void debugDumpAllUndo(); // Does all of above
 
 
 }; // class PBTB

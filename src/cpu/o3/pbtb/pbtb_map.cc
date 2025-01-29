@@ -353,14 +353,23 @@ void PBTBMap::apply_undo(struct undo_action und) {
         breg_set(und.breg, &und.as_overwrite);
         break;
     case utype::U_UNPOP_BITS: {
-        // we're undoing a pb consume, so we need to push it back
+        // we're undoing a pb consume, so need to insert bits at the front
         assert(cond_type[und.breg] == BranchType::ShiftBit);
         assert(und.done_ver == und.undone_ver);
-        BitVec64 bits = und.as_consumed_bits;
-        assert(bits.size() + cond_aux_val[und.breg] <= 64);
 
-        cond_val[und.breg] = (cond_val[und.breg] << bits.size())
-                              | bits.get_data();
+        // put the current value into a bitvec, for ease of operating
+        BitVec64 curr = BitVec64(cond_aux_val[und.breg], cond_val[und.breg]);
+
+        // the bits to return onto the fornt of the vec
+        BitVec64 returning_bits = und.as_consumed_bits;
+        assert(returning_bits.size() + cond_aux_val[und.breg] <= 64);
+
+        // put the returning backs at the front, shifting curr back
+        returning_bits.append(curr); // puts the returning bits
+
+        // write back out of the bitvec
+        cond_aux_val[und.breg] = returning_bits.size();
+        cond_val    [und.breg] = returning_bits.get_data();
         break;
     }
     case utype::U_UNPUSH_BITS: {
@@ -371,8 +380,12 @@ void PBTBMap::apply_undo(struct undo_action und) {
 
         // put the value into a bitvec, for ease of operating
         BitVec64 tmp = BitVec64(cond_aux_val[und.breg], cond_val[und.breg]);
+
+        // pop n
         assert(n <= 64);
         for (int i = 0; i < n; i++) { tmp.pop_back(); }
+
+        // take it out of the bitvec
         cond_aux_val[und.breg] = tmp.size();
         cond_val[und.breg] = tmp.get_data();
         break;
@@ -382,7 +395,7 @@ void PBTBMap::apply_undo(struct undo_action und) {
     }
 
     version[und.breg] = und.undone_ver;
-    DPRINTF(PBTB, "PBTBMap (%s), breg is now: %sn",
+    DPRINTF(PBTB, "PBTBMap (%s), breg is now: %s\n",
                 dbgId, bdataToString(breg_get(und.breg)));
 }
 

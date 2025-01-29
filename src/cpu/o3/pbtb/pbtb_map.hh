@@ -219,7 +219,7 @@ class PBTBMap
         v_str = csprintf("v%d->v%d",
             und.undone_ver, und.done_ver);
 
-        return csprintf("(UND: b%d %s (%s)", und.breg, v_str, prev_str);
+        return csprintf("(UND: b%d %s (%s))", und.breg, v_str, prev_str);
     };
 
 

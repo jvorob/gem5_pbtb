@@ -62,6 +62,8 @@ void BmovTracker::reset() {
     lastDecAny      = 0;
     lastDecPb = 0;
     lastDecMutPb = 0;
+
+    allFlyingBmovs.clear();
 }
 
 // ======== tracking functions ( should be called from Decode)
@@ -78,7 +80,7 @@ void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
         const int breg = inst->destRegIdx(0);
         const bool nonbit = !inst->isBitBmov();
 
-        DPRINTF(Decode, "[tid:%i] [sn:%llu] BmovTracker: decoded "
+        DPRINTF(Decode, "[tid:%i] BmovTracker: decoded [sn:%llu]"
                 "(%s) breg=%d %s\n",
             tid, inst->seqNum,
             inst->staticInst->disassemble(
@@ -96,28 +98,91 @@ void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
             assert(inst->seqNum > lastDecNonBitBmov[breg]);
             lastDecNonBitBmov[breg] = inst->seqNum;
         }
+
+
+        // ==== NEW: keeping track of the numbering might not be sufficient,
+        // also push into vec of in-flight bmovs
+        struct tracker_entry ent;
+        ent.seqNum = inst->seqNum;
+        ent.isBmov = true;
+        ent.isBitBmov = inst->isBitBmov();
+        ent.isPb = false; // in case we decide to also hold onto pbs?
+        ent.breg = breg;
+        ent.isExecuted = false;
+        ent.isSquashed = false;
+        allFlyingBmovs.push_back(ent);
+
+        //TOOD: TEMP
+        debugDump();
     }
 }
 
 void BmovTracker::recordExecBmovFromIew(ThreadID tid,
         InstSeqNum bmovSeq, int breg ) {
-    DPRINTF(Decode, "[tid:%i] BmovTracker: bmov b%d done "
-        " from iew: [sn%d]\n", tid, breg, bmovSeq);
+    DPRINTF(Decode, "[tid:%i] BmovTracker: bmov executed [sn:%d]: b%d"
+        " from iew\n", tid, bmovSeq, breg);
 
     // NOTE: these should always be increasing, since bmovs for the
     // same branch reg are executed serially
     assert( bmovSeq > lastExecBmov[breg] );
     assert(breg >= 0 && breg < PBTB::NUM_REGS);
     lastExecBmov[breg] = bmovSeq;
+
+
+    // === Also update the info in our new list of in-flight bmovs
+    // NOTE: recordExec will be called once per breg, since we can have
+    //        multiple bmovs execute in a cycle
+    //       However, there should only every be one bmov per breg per cycle
+    //       for now, so we don't have to worry about that.
+
+    auto theBmov = std::find_if(
+        allFlyingBmovs.begin(), allFlyingBmovs.end(),
+        [bmovSeq](const auto& entry) { return entry.seqNum == bmovSeq; });
+
+
+    if (theBmov == allFlyingBmovs.end()) {
+        DPRINTF(Decode, "[tid:%i] BmovTracker ERROR: no bmov matching"
+            " seqNum:%d", bmovSeq);
+        debugDump();
+        panic("BUG IN BMOVTRACKER");
+    }
+
+    theBmov->isExecuted = true;
+
+    //TOOD: TEMP
+    debugDump();
 }
 
 void BmovTracker::recordCommit(ThreadID tid,
-         InstSeqNum instSeqNum ) {
-    DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordCommit "
-        "NOT IMPLEMENTED\n", tid, instSeqNum);
+         InstSeqNum commitSeqNum ) {
+    //DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordCommit "
+    //    "NOT IMPLEMENTED\n", tid, instSeqNum);
 
-    //assert(newNum >= lastDoneFromCommit);
-    //lastDoneFromCommit = newNum;
+    assert(commitSeqNum >= lastCommittedInst);
+    lastCommittedInst = commitSeqNum;
+
+    // === Also update the info in our new list of in-flight bmovs
+
+    // everything with seqnum <= commitSeqNum is now committed
+    DPRINTF(Decode, "[tid:%d] BmovTracker: recordCommit "
+        "for [sn:%d]\n", tid, commitSeqNum);
+
+    auto it = allFlyingBmovs.begin();
+
+    while (it != allFlyingBmovs.end() && it->seqNum <= commitSeqNum) {
+        DPRINTF(Decode, "[tid:%d] - bmov [sn:%d] marked committed\n",
+            tid, it->seqNum);
+        it++;
+    }
+
+    // iterator should now be at first non-committed inst
+    assert(it == allFlyingBmovs.end() || it->seqNum > commitSeqNum);
+
+    // Delete all the elements up the iterator
+    allFlyingBmovs.erase(allFlyingBmovs.begin(), it);
+
+    //TOOD: TEMP
+    debugDump();
 }
 
 // Note: this doesn't count squashes the Decode itself generates,
@@ -128,7 +193,70 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
     DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordingSquash\n",
         tid, squashNum);
 
-    //TODO: this is unfinished
+
+    // === New Tracking:
+
+    for (auto& entry: allFlyingBmovs) {
+        // young insts (high seqnum) are squashed away
+        // i.e. anythinge >= squashNum
+
+        if (entry.seqNum > squashNum) {
+        // NOTE: it looks like squashNum is not actually squashed, only
+        // everythign > than it. (via looking at load-store queue?)
+            DPRINTF(Decode, "[tid:%i] - squashed [sn:%d], b%d\n",
+                    tid, entry.seqNum, entry.breg);
+            entry.isSquashed = true;
+        }
+    }
+    //TOOD: TEMP
+    debugDump();
+
+    // update numbers to account for this latest squash
+    //  - we need to reset lastDecBmov, lastDecNonBitBmov, lastExecBmov,
+    //    for each of the 32 bregs
+
+    for (int i = 0; i < NUM_PBTB_REGS; i++) {
+        lastDecBmov[i] = lastCommittedInst;
+        lastDecNonBitBmov[i] = lastCommittedInst;
+        lastExecBmov[i] = lastCommittedInst;
+    }
+    lastDecAny = lastCommittedInst; // this one isnt strictly necessary?
+
+    // walk the list, find the new mins
+    // we want the last (i.e. latest) for each of these, so highest seqnum
+    for (auto& entry: allFlyingBmovs) {
+        // For each non-squashed entry: if it is later than the prev latest,
+        // update that counter
+        if (entry.isSquashed)
+            { continue; }
+        int breg = entry.breg;
+        int seq = entry.seqNum;
+
+        if (seq > lastDecBmov[breg])
+            { lastDecBmov[breg] = seq;}
+
+        if (!entry.isBitBmov && seq > lastDecNonBitBmov[breg])
+            { lastDecNonBitBmov[breg] = seq;}
+
+        if (entry.isExecuted && seq > lastExecBmov[breg])
+            { lastExecBmov[breg] = seq;}
+
+        if (seq > lastDecAny)
+            { lastDecAny = seq; }
+    }
+
+    //// VERY VERBOSE: TEMP FOR DEBUGGING
+    //for (int breg = 0; breg < NUM_PBTB_REGS; breg++) {
+    //DPRINTF(Decode,"[tid:X] BmovTracker: stats: "
+    //        "lastDecAny=%d, "
+    //        "lastBmov[b%d]=%d, lastNBBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
+    //        lastDecAny,
+    //        breg, lastDecBmov[breg],
+    //        breg, lastDecNonBitBmov[breg],
+    //        breg, lastExecBmov[breg]);
+    //}
+
+    /* ===== === OLD: TODO: this was  unfinished
 
     for (int bi = 0; bi < PBTB::NUM_REGS; bi++) {
         // young insts (high seqnum) are squashed away
@@ -153,6 +281,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
         // handle that
         panic("PBTB ERROR: squash from commit squashed unfinished bmovs");
     }
+    */
 }
 
         // ===== OLD BMOV TRACKING:
@@ -249,6 +378,19 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
 
 }
 
+
+void BmovTracker::debugDump() {
+    DPRINTF(Decode, "===== DUMPING BmovTracker: (Bit/Exec/Sqsh) ====\n");
+    for (const auto& entry : allFlyingBmovs) {
+        DPRINTF(Decode, "- [sn:%d], b%d, (%c%c%c)\n",
+            entry.seqNum, entry.breg,
+            //entry.isBmov?'T':'F',
+            entry.isBitBmov?'B':'.',
+            entry.isExecuted?'X':'.',
+            entry.isSquashed?'S':'.');
+    }
+}
+
 // ==============================================================
 //
 //                        JV PRECOMPUTED BTB
@@ -275,6 +417,32 @@ void PBTB::debugDump(int regstart, int regstop) {
 void PBTB::debugDump() { debugDump(0, NUM_REGS); }
 
 
+// Prints out undo stack for the given breg
+void PBTB::debugDumpUndo(int breg) {
+    //TODO: don't print undo stuff for now
+    DPRINTF(PBTB, " ==== PBTB: Undo stack for b%d (%d actions)\n",
+        breg, undo_stacks[breg].size());
+    for (const auto &entry : undo_stacks[breg]) {
+        DPRINTF(PBTB, "- %s\n", undoEntryToString(entry));
+    };
+
+}
+
+// Prints out all non-empty stacks
+void PBTB::debugDumpAllUndo() {
+    int num_nonempty = 0;
+    for (int breg = 0; breg < NUM_PBTB_REGS; breg++) {
+        num_nonempty++;
+        if (undo_stacks[breg].size() > 0) {
+            debugDumpUndo(breg);
+        }
+    }
+
+    if (num_nonempty == 0) {
+        DPRINTF(PBTB, "==== PBTB: all undo stacks empty\n");
+    }
+}
+
 void PBTB::savePrevState(int breg, InstSeqNum seqnum,
                                    undo_action undo) {
     struct undo_entry NEW =
@@ -284,11 +452,8 @@ void PBTB::savePrevState(int breg, InstSeqNum seqnum,
     };
     assert(undo.breg == breg);
 
-    //TODO: don't print undo stuff for now
-    DPRINTF(PBTB, "Current undo stack for b%d:\n", breg);
-    for (const auto &entry : undo_stacks[breg]) {
-        DPRINTF(PBTB, "- %s\n", undoEntryToString(entry));
-    };
+    //TODO: temp debug
+    debugDumpUndo(breg);
 
     DPRINTF(PBTB, "saving to undo stack for breg %d: NEW=%s\n",
         breg, undoEntryToString(NEW));
@@ -402,24 +567,24 @@ std::string PBTBMap::bdataToString(const struct breg_data &bdata) {
     }
 }
 
-// undoes back to and including squashingSeqNum
+// undoes back to (but not including!) squashingSeqNum
 void PBTB::unwindSquash(InstSeqNum squashingSeqNum) {
-    DPRINTF(PBTB, "PBTB: Unwinding to inst [sn:%d]\n", squashingSeqNum);
+    DPRINTF(PBTB, "PBTB: Squashed, unwinding to before inst [sn:%d]\n",
+        squashingSeqNum);
 
     for (int breg = 0; breg < NUM_REGS; breg++) {
-        auto curr_stack = undo_stacks[breg];
+        auto& curr_stack = undo_stacks[breg];
 
-        while (!curr_stack.empty()) {
-            struct undo_entry curr = curr_stack.back();
-            if (curr.seqnum >= squashingSeqNum) {
-                DPRINTF(PBTB, "PBTB: (b%d) undoing PBTB op [sn:%d], b%d\n",
-                    breg, squashingSeqNum, curr.action.breg);
+        while (!curr_stack.empty()
+            && curr_stack.back().seqnum > squashingSeqNum) {
 
+            DPRINTF(PBTB, "PBTB: (b%d) undoing PBTB op [sn:%d], b%d\n",
+                breg, curr_stack.back().seqnum,
+                curr_stack.back().action.breg);
 
-                // Do the undo?
-                map_final.apply_undo(curr.action);
-                curr_stack.pop_back();
-            }
+            // Do the undo?
+            map_final.apply_undo(curr_stack.back().action);
+            curr_stack.pop_back();
         }
     }
 }

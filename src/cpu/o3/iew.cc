@@ -382,11 +382,6 @@ IEW::squash(ThreadID tid)
 {
     DPRINTF(IEW, "[tid:%i] Squashing all instructions.\n", tid);
 
-    // //TODO JV: PBTB doesn't yet handle exceptions (squash in IEW)
-    // // so panic for now so we can catch it
-    // panic("JV PBTB Doesn't handle squashing in IEW!\n");
-    DPRINTF(IEW, "[tid:%i] WARNING: PBTB DOESN'T HANDLE SQUASHING YET\n", tid);
-
     // Tell the IQ to start squashing.
     instQueue.squash(tid);
 
@@ -1107,6 +1102,20 @@ IEW::printAvailableInsts()
     std::cout << "\n";
 }
 
+
+// JV: UGLY HACK:
+// I need a 64-bit int hash for debugging in executeInsts, so I'm sticking
+// it here. I'm so sorry
+static uint64_t jv_int64hash(uint64_t x) {
+    // hash stolen from https://nullprogram.com/blog/2018/07/31/
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9U;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebU;
+    x ^= x >> 31;
+    return x;
+}
+
 void
 IEW::executeInsts()
 {
@@ -1143,7 +1152,23 @@ IEW::executeInsts()
         ppExecute->notify(inst);
 
         // Check if the instruction is squashed; if so then skip it
-        if (inst->isSquashed()) {
+        if (inst->isSquashed() ||
+            (inst->isBmov() && inst->isSquashedInIQ())) {
+                // JV PBTB: Make sure we don't execute a bmov that's just been
+                // squashed in the IQ, or else it will get sent to
+                // pbtb AFTER being undone (or after it would have been
+                // undone? which we don't want)
+                // Specifically, it seemed to be an issue where an inst
+                // was issued, but wouldn't get isSquashed until the ROB
+                // got around to it in several cycles, so the squash signal
+                // got to Decode/the PBTB first, the undo was applied, and
+                // THEN the (should-have-been-squashed) bmov executed in IEW,
+                // big problem
+
+                // NOTE: this might be a problem since we toss the inst
+                // before it's marked as squashed by ROBSquashing?
+                // but it should be ok since I think dispatch and WB are
+                // stalled during squashing, even if exe is not
             DPRINTF(IEW, "Execute: Instruction was squashed. PC: %s, [tid:%i]"
                          " [sn:%llu]\n", inst->pcState(), inst->threadNumber,
                          inst->seqNum);
@@ -1278,6 +1303,10 @@ IEW::executeInsts()
                     inst->staticInst->disassemble(
                         inst->pcState().instAddr()));
 
+                assert(!inst->isSquashedInIQ()); // JV NOTE: this was
+                // an issue before, but now it shouldn't happen since we
+                // explicitly skip bmovs that are squashedInIQ
+
                 // NOTE: we should only be able to execute one bmov
                 //       per breg per cycle.
                 assert(toDecode->iewInfo->lastExecBmovSeqNum[breg] == 0);
@@ -1355,11 +1384,26 @@ IEW::executeInsts()
 
                 ++iewStats.memOrderViolationEvents;
 
-            } else if ((inst->seqNum % 10) == 0) { // TODO JV TEMP DEBUG
-                // MANUALLY FORCE A SQUASH roughly 1/100 of the time to verify
-                // squash logic is correct
+            // ======== JV DEBUG: TRIGGER A MANUAL SQUASH SOMETIMES
+            } else if (false) { // swap the comments to enable squashing
+            //} else if (jv_int64hash(inst->seqNum) % 11 == 0) {
+                // (to verify squash logic is correct)
+                //
+                // Note: I want to randomize (via hash) which seqnums get
+                // squashed, so we don't end up in perpetual loops of
+                // accidentally squashing the first inst each time
+
+                // NOTE ON SQUASH NUMBERING:
+                //   squashDueToMemOrder is a special case that re-execs
+                //   the squashed inst. Normally all other squashes take the
+                //   squashSeqNum as NOT re-executed, so all squashes go
+                //   up to > squashSeqNum, not >=
+                //   (memOrder does a -1 to get the >= behavor, so let's print
+                //    with the -1 here for consistency)
                 DPRINTF(PBTB, "JV DEBUG !!!!: IEW Triggering manual squash"
-                            " on inst [sn:%d]\n", inst->seqNum);
+                            " up to inst [sn:%d]\n", inst->seqNum-1);
+                DPRINTF(IEW, "JV DEBUG !!!!: IEW Triggering manual squash"
+                            " up to inst [sn:%d]\n", inst->seqNum-1);
                 squashDueToMemOrder(inst, tid);
             }
 

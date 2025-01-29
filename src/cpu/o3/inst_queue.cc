@@ -215,7 +215,8 @@ InstructionQueue::IQStats::IQStats(CPU *cpu, const unsigned &total_width)
     ADD_STAT(issueRate, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Cycle>::get(),
              "Inst issue rate", instsIssued / cpu->baseStats.numCycles),
-    ADD_STAT(fuBusy, statistics::units::Count::get(), "FU busy when requested"),
+    ADD_STAT(fuBusy, statistics::units::Count::get(),
+             "FU busy when requested"),
     ADD_STAT(fuBusyRate, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Count>::get(),
              "FU busy rate (busy events/executed inst)")
@@ -1215,6 +1216,9 @@ InstructionQueue::doSquash(ThreadID tid)
         }
 
         if (!squashed_inst->isIssued() ||
+            squashed_inst->isBmov() || // JV: we need to make sure we don't
+            // execute bmovs that have already been squashed, since they
+            // immediately modify the pbtb.
             (squashed_inst->isMemRef() &&
              !squashed_inst->memOpDone())) {
 

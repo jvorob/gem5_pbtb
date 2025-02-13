@@ -420,10 +420,10 @@ void PBTB::debugDump() { debugDump(0, NUM_REGS); }
 // Prints out undo stack for the given breg
 void PBTB::debugDumpUndo(int breg) {
     //TODO: don't print undo stuff for now
-    DPRINTF(PBTB, " ==== PBTB: Undo stack for b%d (%d actions)\n",
+    DPRINTF(PBTBVerbose, " ==== PBTB: Undo stack for b%d (%d actions)\n",
         breg, undo_stacks[breg].size());
     for (const auto &entry : undo_stacks[breg]) {
-        DPRINTF(PBTB, "- %s\n", undoEntryToString(entry));
+        DPRINTF(PBTBVerbose, "- %s\n", undoEntryToString(entry));
     };
 
 }
@@ -439,7 +439,7 @@ void PBTB::debugDumpAllUndo() {
     }
 
     if (num_nonempty == 0) {
-        DPRINTF(PBTB, "==== PBTB: all undo stacks empty\n");
+        DPRINTF(PBTBVerbose, "==== PBTB: all undo stacks empty\n");
     }
 }
 

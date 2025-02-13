@@ -654,7 +654,8 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
 
     // TODO: I'm not sure how to deal with PCStateBases: this tempAddr
     // thing seems to work, so I'm sticking with it
-    auto tempAddr = GenericISA::SimplePCState<4>();
+    //auto tempAddr = GenericISA::SimplePCState<4>();
+    //auto tempAddr = pc_inout.as<GenericISA::PCStateWithNext>();
     // TODO: everywhere else uses a unique_ptr<PCState>, is there a reason for
     // that? or is a bare object fine?
     // Old code: auto target=std::make_unique<GenericISA::SimplePCState<4>>();
@@ -662,9 +663,18 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
     // ==== Prediction made: return to caller
     // Return next-fetched PC through pc_inout arg
     if (res == PBTBResultType::PR_Taken){
-        tempAddr.set(tgt);
-        set(pc_inout, tempAddr);
+
+        // We need to set the next pc (normally a branch inst does this when
+        //   it executes, in the generated isa code)
+        pc_inout.as<GenericISA::PCStateWithNext>().npc(tgt);
+
+        // We also need to advancePC so that we actually go to that next pc?
+        // normally this would happen in IEW when it hits squashDueToBranch(),
+        // so that the branch target is saved in .instAddr(), not in .npc()
+        inst->advancePC(pc_inout);
+
     } else { //Else: no match, OR match found but not taken
+        // pc + 4 (probably)
         inst->advancePC(pc_inout);
     }
 

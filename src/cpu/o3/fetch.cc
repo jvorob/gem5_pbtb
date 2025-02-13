@@ -521,7 +521,8 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
 
     //Result will be one of PR_Taken,PR_NotTaken,PR_Exhaust,PR_NoMatch
     if (res == PBTBMap::PBTBResultType::PR_NoMatch) {
-        //???
+        // no-op: next_pc and predict_taken have already
+        //        been set to the correct values (pc+4 and false)
     } else {
         // If !=NoMatch, breg should be valid
         assert(breg >= 0); // breg guaranteed to be valid

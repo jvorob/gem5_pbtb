@@ -1111,8 +1111,8 @@ class DynInst : public ExecContext, public RefCounted
                 break;
         }
 
-        //TODO JV TEMP: for now let's just show the first 8
-        cpu->pbtb.debugDump(0, 8);
+        cpu->pbtb.debugDump(); // pbtb should auto-abbreviate blank entries
+        // so this should hopefully not be too verbose
         return;
     }
 

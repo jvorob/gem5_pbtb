@@ -56,7 +56,26 @@ void PBTBMap::debugDump(int regstart, int regstop) {
 
     DPRINTF(PBTBVerbose, "}\n");
 }
-void PBTBMap::debugDump() { debugDump(0, NUM_REGS); }
+void PBTBMap::debugDump() {
+    // Will print out all regs, unless a big block of regs at the end
+    // are all uninitialized, in which case it skips them
+
+    int i;
+    for (i = NUM_REGS-1; i >= 0; i--) {
+        if (cond_type[i] != BranchType::NoBranch
+            || source[i] != 0
+            || target[i] != 0) {
+                break; // non blank entry
+        }
+    }
+
+    // we broke as soon as we found a nonblank entry
+    // +1 is first blank entry
+    // +2 is past first blank entry
+    i += 2; // move fwd 1 to include blank entry
+    if (i > NUM_REGS) { i = NUM_REGS;  }
+    debugDump(0, i);
+}
 
 // =============== Single-breg accessors
 //using PBTBMap::breg_data;
@@ -360,7 +379,7 @@ void PBTBMap::apply_undo(struct undo_action und) {
         // put the current value into a bitvec, for ease of operating
         BitVec64 curr = BitVec64(cond_aux_val[und.breg], cond_val[und.breg]);
 
-        // the bits to return onto the fornt of the vec
+        // the bits to return onto the front of the vec
         BitVec64 returning_bits = und.as_consumed_bits;
         assert(returning_bits.size() + cond_aux_val[und.breg] <= 64);
 

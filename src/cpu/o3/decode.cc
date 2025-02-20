@@ -927,9 +927,14 @@ Decode::decodeInsts(ThreadID tid)
 
 
             //Update to correct target
-            auto tempAddr = GenericISA::SimplePCState<4>();
-            tempAddr.set(d_targAddr);
-            inst->setPredTarg(tempAddr);
+            auto newPC = inst->readPredTarg().clone();
+            newPC->as<GenericISA::PCStateWithNext>().npc(d_targAddr);
+
+            //needed to move to next pc, npc becomes npc+4
+            newPC->as<GenericISA::PCStateWithNext>().advance();
+            inst->setPredTarg(*newPC);
+            delete newPC;
+
 
             // squash overwrites pbtb to correct state (from finalize)
             squash(inst, inst->threadNumber);

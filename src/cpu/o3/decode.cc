@@ -145,7 +145,19 @@ Decode::DecodeStats::DecodeStats(CPU *cpu)
       ADD_STAT(decodedInsts, statistics::units::Count::get(),
                "Number of instructions handled by decode"),
       ADD_STAT(squashedInsts, statistics::units::Count::get(),
-               "Number of squashed instructions handled by decode")
+               "Number of squashed instructions handled by decode"),
+        /* ============ JV: PBTB Stats ========== */
+      ADD_STAT(pbtbFinalizedBmovs, statistics::units::Count::get(),
+               "Number of bmov insts that pass the finalize point"),
+      ADD_STAT(pbtbFinalizedPbs, statistics::units::Count::get(),
+               "Number of pb insts that pass the finalize point"),
+      ADD_STAT(pbtbSquashes, statistics::units::Count::get(),
+               "Number of pbtb squashes (due to a pb 'mispredict' at fetch)"),
+      ADD_STAT(pbtbBlockedCycles, statistics::units::Count::get(),
+               "Number of cycles spent blocked on a pb waiting for a bmov"),
+      ADD_STAT(pbtbBlockedExhaustCycles, statistics::units::Count::get(),
+               "Number of cycles spent blocked for an incremental bmov "
+               "(i.e. when the breg is valid, but exhausted of bits)")
 {
     idleCycles.prereq(idleCycles);
     blockedCycles.prereq(blockedCycles);
@@ -157,6 +169,12 @@ Decode::DecodeStats::DecodeStats(CPU *cpu)
     controlMispred.prereq(controlMispred);
     decodedInsts.prereq(decodedInsts);
     squashedInsts.prereq(squashedInsts);
+    /* ============ JV: PBTB Stats ========== */
+    pbtbFinalizedBmovs.prereq(pbtbFinalizedBmovs);
+    pbtbFinalizedPbs.prereq(pbtbFinalizedPbs);
+    pbtbSquashes.prereq(pbtbSquashes);
+    pbtbBlockedCycles.prereq(pbtbBlockedCycles);
+    pbtbBlockedExhaustCycles.prereq(pbtbBlockedExhaustCycles);
 }
 
 void
@@ -226,34 +244,6 @@ Decode::checkStall(ThreadID tid) const
         DPRINTF(Decode,"[tid:%i] Stall from Rename stage detected.\n", tid);
         ret_val = true;
     }
-
-
-    // ===== TODO JV: PBTB:
-    // if next inst is a placeholder branch,
-    // we have to stall until it's ready to finalize (all bmovs have executed)
-    // For now we're going to stall much more coarsely just to get it working
-
-    bool readingFromSkid = (decodeStatus[tid] == Blocked
-                         || decodeStatus[tid] == Unblocking);
-    const std::deque<DynInstPtr>
-        &insts_to_decode = readingFromSkid ?  skidBuffer[tid] : insts[tid];
-
-    if (insts_to_decode.size() > 0) {
-        DynInstPtr inst = insts_to_decode.front();
-
-        // WARNING: This check is duplicated in Decode::decodeInsts(...)
-        // MAKE SURE BOTH HAVE THE SAME LOGIC
-
-        if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
-            DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
-                           "(in checkStall)\n",
-                    inst->seqNum, tid);
-            ret_val = true;
-        }
-    }
-
-
-
 
     return ret_val;
 }
@@ -588,6 +578,34 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
         return block(tid);
     }
 
+
+    // ===== TODO JV: PBTB:
+    // if next inst is a placeholder branch,
+    // we have to stall until it's ready to finalize (all bmovs have executed)
+    // For now we're going to stall much more coarsely just to get it working
+
+    bool readingFromSkid = (decodeStatus[tid] == Blocked
+                         || decodeStatus[tid] == Unblocking);
+    const std::deque<DynInstPtr>
+        &insts_to_decode = readingFromSkid ?  skidBuffer[tid] : insts[tid];
+
+    if (insts_to_decode.size() > 0) {
+        DynInstPtr inst = insts_to_decode.front();
+
+        // WARNING: This check is duplicated in Decode::decodeInsts(...)
+        // MAKE SURE BOTH HAVE THE SAME LOGIC
+
+        if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
+            DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
+                           "(in checkSignalsAndUpdate)\n",
+                    inst->seqNum, tid);
+            ++stats.pbtbBlockedCycles;
+            return block(tid);
+        }
+    }
+    // ========== END PBTB
+
+
     if (decodeStatus[tid] == Blocked) {
         DPRINTF(Decode, "[tid:%i] Done blocking, switching to unblocking.\n",
                 tid);
@@ -746,10 +764,14 @@ Decode::decodeInsts(ThreadID tid)
 
         // If it's a pb or it was predicted as a pb, need to
         // make sure we're ready to finalize it
+        // WARNING: This is duplicated in Decode::checkSignalsAndUpdate(...)
+        // MAKE SURE BOTH HAVE THE SAME LOGIC
         if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
             DPRINTF(Decode,"[tid:%i] Stalling for pb [sn:%d] finalize "
                             " (in decodeInsts)\n",
                     inst->seqNum, tid);
+
+            ++stats.pbtbBlockedCycles;
 
             //DPRINTF(Decode,"[tid:%i] Stalling inst %d, readPredBTBreg:%d, "
             //               "isControl:%d, isBmov:%d\n",
@@ -792,6 +814,10 @@ Decode::decodeInsts(ThreadID tid)
         }
 #endif
 
+
+        // PBTB: update bmov stats (we'll get pbtbFinalizedPbs down below)
+        if (inst->isBmov()){ ++stats.pbtbFinalizedBmovs; }
+
         // ===== PBTB: requery the finalize pbtb
 
         PBTB::PBTBResultType res;
@@ -818,7 +844,10 @@ Decode::decodeInsts(ThreadID tid)
         //We now have all our variables
 
         if (d_exhausted) { // Incorrect code: missed a bmov somewhere
-            panic("PBTB exhausted in finalize (in decode)\n");
+            panic("PBTB: hit exhausted breg in finalize (in decode).\n"
+                  "This likely means that your binary is invalid, executing "
+                  "too many pbs without enough corresponding "
+                  "bmov_c insts to supply them");
             //TODO: this should eventually throw a BMOV exception
         }
 
@@ -894,9 +923,14 @@ Decode::decodeInsts(ThreadID tid)
                 //        inst->pcState().instAddr(), d_targAddr);
                 assert(d_taken == f_taken);
                 assert(!d_taken || (d_targAddr == f_targAddr));
+                ++stats.pbtbFinalizedPbs;
                 //TODO: should this be only if taken?
                 //     ++stats.branchResolved;
             } else {
+                // We got a branch, but fetch didn't predict it as such
+                // Note: it's also possible that fetch predicted a pb where
+                //       there was none, which wouldn't hit this case
+
                 //++stats.branchMispred;
 
                 //// Might want to set some sort of boolean and just do
@@ -913,7 +947,7 @@ Decode::decodeInsts(ThreadID tid)
                 //break;
             }
 
-        }
+        } // else d_breg<0, fbreg<0, so no branch and no mispred
 
         if (mispred) {
             DPRINTF(Decode,
@@ -924,6 +958,8 @@ Decode::decodeInsts(ThreadID tid)
                     tid, inst->seqNum, mispredReason,
                     f_targAddr, d_targAddr);
             ++stats.controlMispred;
+
+            ++stats.pbtbSquashes; // JV PBTB
 
 
             //Update to correct target

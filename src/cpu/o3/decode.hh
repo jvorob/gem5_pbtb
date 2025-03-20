@@ -337,6 +337,20 @@ class Decode
         statistics::Scalar decodedInsts;
         /** Stat for total number of squashed instructions. */
         statistics::Scalar squashedInsts;
+
+        /* ============ JV: PBTB Stats ========== */
+        // Number of bmov insts that pass the finalize point
+        statistics::Scalar pbtbFinalizedBmovs;
+        // Number of pb insts that pass the finalize point
+        statistics::Scalar pbtbFinalizedPbs;
+        // Number of pbtb squashes (due to a pb "mispredict" at fetch)
+        statistics::Scalar pbtbSquashes;
+
+        // Number of cycles spent blocked on a pb waiting for a bmov (total)
+        statistics::Scalar pbtbBlockedCycles;
+        // Number of cycles spent blocked for an incremental bmov
+        //   (i.e. when the breg is valid, but exhausted of bits)
+        statistics::Scalar pbtbBlockedExhaustCycles;
     } stats;
 };
 

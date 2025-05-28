@@ -170,11 +170,11 @@ Decode::DecodeStats::DecodeStats(CPU *cpu)
     decodedInsts.prereq(decodedInsts);
     squashedInsts.prereq(squashedInsts);
     /* ============ JV: PBTB Stats ========== */
-    pbtbFinalizedBmovs.prereq(pbtbFinalizedBmovs);
-    pbtbFinalizedPbs.prereq(pbtbFinalizedPbs);
-    pbtbSquashes.prereq(pbtbSquashes);
-    pbtbBlockedCycles.prereq(pbtbBlockedCycles);
-    pbtbBlockedExhaustCycles.prereq(pbtbBlockedExhaustCycles);
+    //pbtbFinalizedBmovs.prereq(pbtbFinalizedBmovs);
+    //pbtbFinalizedPbs.prereq(pbtbFinalizedPbs);
+    //pbtbSquashes.prereq(pbtbSquashes);
+    //pbtbBlockedCycles.prereq(pbtbBlockedCycles);
+    //pbtbBlockedExhaustCycles.prereq(pbtbBlockedExhaustCycles);
 }
 
 void

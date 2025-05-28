@@ -825,8 +825,7 @@ Decode::decodeInsts(ThreadID tid)
         uint64_t d_version = 0;
         bool     d_exhausted;
         bool     d_taken;
-        Addr     d_targAddr = 0; //TODO
-        //TODO: do this properly
+        Addr     d_targAddr = 0;
         res = cpu->pbtb.queryFromDecode(inst->staticInst,
                                         inst->pcState().instAddr(),
                                         inst->seqNum,

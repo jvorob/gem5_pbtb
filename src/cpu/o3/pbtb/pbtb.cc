@@ -590,8 +590,12 @@ void PBTB::unwindSquash(InstSeqNum squashingSeqNum) {
 }
 
 
-// =============== PUBLIC Modification functions
-// (these use the per-map functions but touch multiple maps)
+// ==============================================================
+//
+//                PBTB: PUBLIC Access Functions
+//
+// ==============================================================
+// (these use the per-map functions but can touch multiple maps)
 
 
 // == Each of these should correspond to one bmov instruction
@@ -705,7 +709,15 @@ PBTB::PBTBResultType PBTB::queryFromDecode(
 
     if (res != PBTBResultType::PR_Taken) {
         // TODO: This is a horrible pile of hacks but I don't want to switch
-        // everything to use PCStates
+        // everything to use PCStates.
+
+        // ALSO NOTE: creating a generic PCState was the cause of a lot of
+        // bugs (PCstates track their instruction type/width, i.e. RV64-
+        // specific stuff), so I switched to using the existing pc_inout
+        // and setting its .npc (see queryFromFetch).
+        // However, it shouldn't matter here because we're only returning the
+        // address, and we're just using the PCState for a PC+4 that satisfies
+        // the type-checker.
         auto tempAddr = GenericISA::SimplePCState<4>();
         tempAddr.set(pcAddr);
         inst->advancePC(tempAddr);

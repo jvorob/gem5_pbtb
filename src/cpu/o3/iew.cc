@@ -112,6 +112,9 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
     updateLSQNextCycle = false;
 
     skidBufferMax = (renameToIEWDelay + 1) * params.renameWidth;
+
+    // JV PBTB
+    branchInFlightSN = 0;
 }
 
 std::string
@@ -408,6 +411,9 @@ IEW::squash(ThreadID tid)
         skidBuffer[tid].pop();
     }
 
+    // JV PBTB: we squashed everything, so no branch is still in flight
+    branchInFlightSN = 0;
+
     emptyRenameInsts(tid);
 }
 
@@ -432,6 +438,11 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
 
         wroteToTimeBuffer = true;
     }
+
+    // JV PBTB: this should only happen when we just executed the branch
+    // so it should be cleared anyway?
+    assert(branchInFlightSN == 0);
+    //branchInFlightSN = 0;
 
 }
 
@@ -458,6 +469,15 @@ IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
         toCommit->includeSquashInst[tid] = true;
 
         wroteToTimeBuffer = true;
+    }
+
+    // JV PBTB: ok uhhhh
+    // if we have an inflight branch, we need to check if we squashed it
+    // everything > than squashnum gets squashed
+    if (branchInFlightSN != 0 && branchInFlightSN >= inst->seqNum) {
+        DPRINTF(IEW, "(PBTB) in-flight branch at [sn:%d] was squashed\n",
+            branchInFlightSN);
+        branchInFlightSN = 0;
     }
 }
 
@@ -658,6 +678,12 @@ IEW::checkStall(ThreadID tid)
         ret_val = true;
     } else if (instQueue.isFull(tid)) {
         DPRINTF(IEW,"[tid:%i] Stall: IQ  is full.\n",tid);
+        ret_val = true;
+    // JV PBTB
+    } else if (branchInFlightSN != 0) {
+        DPRINTF(IEW, "[tid:%i] Stall: (PBTB) branch [sn:%d]"
+            " is still not executed\n",
+        tid, branchInFlightSN);
         ret_val = true;
     }
 
@@ -912,6 +938,16 @@ IEW::dispatchInsts(ThreadID tid)
             break;
         }
 
+        // === JV PBTB: if we executed a conditional or indirect branch and it
+        // still hasn't executed, we need to stall until it does
+        if (branchInFlightSN > 0) {
+            DPRINTF(IEW, "[tid:%i], Issue: (PBTB) blocking for branch ahead "
+                " with [sn:%d]\n",
+                tid, branchInFlightSN);
+            block(tid);
+            break;
+        }
+
         // Check LSQ if inst is LD/ST
         if ((inst->isAtomic() && ldstQueue.sqFull(tid)) ||
             (inst->isLoad() && ldstQueue.lqFull(tid)) ||
@@ -1018,6 +1054,23 @@ IEW::dispatchInsts(ThreadID tid)
             cpu->executeStats[tid]->numNop++;
 
             add_to_iq = false;
+
+        // === JV PBTB: if we dispatch a branch instruction, we need to
+        //      record that so next inst can stall
+        } else if (inst->isCondCtrl() || inst->isIndirectCtrl()) {
+            // it shouldn't be possible for a second br to dispatch before
+            // the last one executed
+            assert(branchInFlightSN == 0);
+
+            DPRINTF(IEW, "[tid:%i] Issue: (PBTB): Branch dispatched [sn:%d],"
+                    " next inst should block\n",
+                    tid, inst->seqNum);
+            branchInFlightSN = inst->seqNum;
+
+            // We still need to execute it as normal, so duplicate this code
+            assert(!inst->isExecuted());
+            add_to_iq = true;
+
         } else {
             assert(!inst->isExecuted());
             add_to_iq = true;
@@ -1236,6 +1289,27 @@ IEW::executeInsts()
             instToCommit(inst);
         }
 
+        // JV PBTB: if this was a conditional or indirect branch, update
+        // things accordingly. unconditional directr branches are known
+        // at decode time and so don't need to be checked
+        if (inst->isCondCtrl() || inst->isIndirectCtrl()) {
+            DPRINTF(IEW, "Execute: (PBTB) executed in-flight branch [sn:%d] "
+                "(branchInFlight was %d), will resume\n",
+                inst->seqNum, branchInFlightSN);
+
+            // note: we should only ever have one mispredictable branch
+            // in-flight at a time, so any executed branch should always
+            // be the in-flight one
+            assert(branchInFlightSN == inst->seqNum);
+
+            // the threadnumber stuff is entirely wrong, because really we
+            // should block per thread, but we're just aiming for single
+            // threaded so it's fine
+            branchInFlightSN = 0;
+            unblock(inst->threadNumber);
+
+        }
+
         updateExeInstStats(inst);
 
         // Check if branch prediction was correct, if not then we need
@@ -1270,6 +1344,11 @@ IEW::executeInsts()
                         tid, inst->seqNum, inst->pcState());
                 // If incorrect, then signal the ROB that it must be squashed.
                 squashDueToBranch(inst, tid);
+
+                // JV PBTB do we need to do anything here?
+                // I think not; we updated the in-flight seqnum earlier
+                // when the branch executed, and whether it mispredicted
+                // or not, the issue-non-spec gate doesnt care
 
                 ppMispredict->notify(inst);
 

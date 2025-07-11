@@ -350,6 +350,12 @@ class IEW
     /** Debug function to print instructions that are issued this cycle. */
     void printAvailableInsts();
 
+    // JV PBTB:
+    /** for nonspec dispatch, we can't issue further insts as long as the
+     * last dispatched branch is not-yet-executed. If there is such a branch,
+     * this is its seqnum, else this is 0 */
+    int branchInFlightSN;
+
   public:
     /** Instruction queue. */
     InstructionQueue instQueue;

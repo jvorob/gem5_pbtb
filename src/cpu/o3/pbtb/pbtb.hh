@@ -124,7 +124,7 @@ class BmovTracker
  * handling for speculation/squashing
  */
 
-const bool PBTB_ENABLE_PREDICTOR = true;
+const bool PBTB_ENABLE_PREDICTOR = false;
 class PBTB
 {
   public:

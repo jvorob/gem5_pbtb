@@ -194,7 +194,10 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
              "Number of instructions fetched each cycle (Total)"),
     ADD_STAT(idleRate, statistics::units::Ratio::get(),
              "Ratio of cycles fetch was idle",
-             idleCycles / cpu->baseStats.numCycles)
+             idleCycles / cpu->baseStats.numCycles),
+    /* ============ JV: PBTB Stats ========== */
+    ADD_STAT(pbtbFetchExhausted, statistics::units::Count::get(),
+            "Number of fetched insts that hit a valid but exhausted breg")
 {
         predictedBranches
             .prereq(predictedBranches);
@@ -521,6 +524,10 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
                                 was_exhausted);
 
     predict_taken = (res == PBTBMap::PBTBResultType::PR_Taken);
+
+    // Count how many fetched insts hit an exhausted breg
+    // (i.e. how many could have been helped by the pbtb predictor)
+    if (was_exhausted) { fetchStats.pbtbFetchExhausted++; }
 
     // Note: originally, an exhausted breg just means "not taken"
     // but with the PBTB predictor, exhausted bregs will return a prediction

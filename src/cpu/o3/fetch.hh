@@ -575,6 +575,9 @@ class Fetch
         statistics::Distribution nisnDist;
         /** Rate of how often fetch was idle. */
         statistics::Formula idleRate;
+        /* ============ JV: PBTB Stats ========== */
+        // Number of fetched insts that hit a valid but exhausted breg
+        statistics::Scalar pbtbFetchExhausted;
     } fetchStats;
 };
 

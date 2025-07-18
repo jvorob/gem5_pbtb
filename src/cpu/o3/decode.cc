@@ -878,21 +878,36 @@ Decode::decodeInsts(ThreadID tid)
         } else if (d_breg >= 0) {
             // There is a branch here:
 
-            if (f_breg != d_breg) {
-                mispred = true;
-                snprintf(mispredReason, sizeof(mispredReason),
-                        "fetch had wrong breg: f@b%d, d@b%d",
-                        f_breg, d_breg);
-            } else if (f_exhausted) {
-                mispred = true;
-                snprintf(mispredReason, sizeof(mispredReason),
-                        "fetch read from exhausted breg: f@b%d-EXH",
-                        f_breg);
-            } else if (f_version != d_version) {
-                mispred = true;
-                snprintf(mispredReason, sizeof(mispredReason),
-                        "version mismatch: f@b%d-v%ld, d@b%d-v%ld",
-                        f_breg, f_version, d_breg, d_version);
+            if (PBTB_ENABLE_PREDICTOR) {
+                // TEMP HACK: originally we verify that fetch EXACTLY matched
+                // up and squash if ANYTHING was wrong (exhausted, wrong
+                // version, etc). But actually, we only need to squash
+                // if address was wrong
+                if (d_targAddr != f_targAddr || d_taken != f_taken) {
+                    mispred = true;
+                    snprintf(mispredReason, sizeof(mispredReason),
+                            "fetch went to wrong pc: f->0x%lx, d->0x%lx",
+                            f_targAddr, d_targAddr);
+                }
+
+            } else {
+                // Use original detailed / sticklery error checking
+                if (f_breg != d_breg) {
+                    mispred = true;
+                    snprintf(mispredReason, sizeof(mispredReason),
+                            "fetch had wrong breg: f@b%d, d@b%d",
+                            f_breg, d_breg);
+                } else if (f_exhausted) {
+                    mispred = true;
+                    snprintf(mispredReason, sizeof(mispredReason),
+                            "fetch read from exhausted breg: f@b%d-EXH",
+                            f_breg);
+                } else if (f_version != d_version) {
+                    mispred = true;
+                    snprintf(mispredReason, sizeof(mispredReason),
+                            "version mismatch: f@b%d-v%ld, d@b%d-v%ld",
+                            f_breg, f_version, d_breg, d_version);
+                }
             }
 
             DPRINTF(Decode, "JV PBTB: Finalized a branch (%s)"

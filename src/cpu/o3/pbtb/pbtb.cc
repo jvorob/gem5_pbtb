@@ -403,7 +403,7 @@ std::string PBTB::name() const {
 }
 
 
-// TODO: we used to do all the printing from here, but not PBTBMap handles it
+// TODO: we used to do all the printing from here, but now PBTBMap handles it
 // should this be removed?
 void PBTB::debugDump(int regstart, int regstop) {
     const int which_map = 0; // NOTE: change this manually when testing
@@ -415,6 +415,30 @@ void PBTB::debugDump(int regstart, int regstop) {
 }
 
 void PBTB::debugDump() { debugDump(0, NUM_REGS); }
+
+
+// ==== Predictor code
+
+// reset all to weak not-taken
+void PBTB::clear_predictor() {
+    for (int i = 0; i < NUM_REGS; i++) { predictor_ctrs[i] = 1; }
+}
+
+void PBTB::write_predictor(int breg, bool taken) {
+    // updating 2-bit saturating counter
+    int c = predictor_ctrs[breg];
+    c += taken ? 1 : -1;
+    if (c < 0) { c = 0; }
+    if (c > 3) { c = 3; }
+    predictor_ctrs[breg] = c;
+}
+
+bool PBTB::query_predictor(int breg) {
+    // 0 or 1 is not taken, 2 or 3 is taken
+    return predictor_ctrs[breg] >= 2;
+}
+
+// ==== Undo Code
 
 
 // Prints out undo stack for the given breg
@@ -643,11 +667,14 @@ void PBTB::squashFinalizeToFetch() {
     * @param pc The predicted PC is passed back through this parameter.
     * @param p_breg_out breg is passed back here, or -1 if no match
     * @param p_version_out version for breg is passed back here
+    * @param p_exhaust_out PREDICTOR HACK, this will be true if branch was exh.
     * @return Returns PBTBResultType for T, NT, Exhausted, and NoMatch
+    * // NOTE: no longer returns Exhaust-type: now will set the exhaust flag
+    * //       instead
     */
 PBTB::PBTBResultType PBTB::queryFromFetch(
             const StaticInstPtr inst, PCStateBase &pc_inout,
-            int *p_breg_out, uint64_t *p_version_out) {
+            int *p_breg_out, uint64_t *p_version_out, bool *p_exhaust_out) {
 
     Addr tgt = pc_inout.instAddr(); //will be overwritten if taken
 
@@ -663,6 +690,27 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
     // TODO: everywhere else uses a unique_ptr<PCState>, is there a reason for
     // that? or is a bare object fine?
     // Old code: auto target=std::make_unique<GenericISA::SimplePCState<4>>();
+
+
+    // If we matched an exhausted breg, let's assume it was
+    //       right and return a result according to the predictor
+    if (res == PBTBResultType::PR_Exhaust) {
+        *p_exhaust_out = true;
+
+        // If we've disabled the predictor, this will be skipped, and we'll
+        // just return PR_Exhaust, which counts as (I think) not taken
+        if (PBTB_ENABLE_PREDICTOR) {
+            bool pred = query_predictor(*p_breg_out);
+            res = pred ? PBTBResultType::PR_Taken :
+                         PBTBResultType::PR_NotTaken;
+
+            // hack: if exhausted, pbtb_map wouldn't set the addr, so
+            // we need to set it ourselves
+            if (pred) { tgt = map_fetch.target[*p_breg_out]; }
+        }
+    } else {
+        *p_exhaust_out = false;
+    }
 
     // ==== Prediction made: return to caller
     // Return next-fetched PC through pc_inout arg
@@ -706,6 +754,20 @@ PBTB::PBTBResultType PBTB::queryFromDecode(
         // Undo type will only be non-None if we hit a loop or bit-branch
         savePrevState(*p_breg_out, seqnum, undo);
     }
+
+
+    // update the predictor from the pb we just verified (if we got an answer)
+    if (res == PBTBResultType::PR_Taken ||
+        res == PBTBResultType::PR_NotTaken) {
+
+        bool taken = (res == PBTBResultType::PR_Taken);
+        write_predictor(*p_breg_out, taken);
+        DPRINTF(PBTB, "PBTB: [sn:%llu] got pb b%d (%s) Updating predictor to "
+            "%d/3\n",
+            seqnum, *p_breg_out, taken ? "T" : "NT",
+            predictor_ctrs[*p_breg_out]);
+    }
+
 
     if (res != PBTBResultType::PR_Taken) {
         // TODO: This is a horrible pile of hacks but I don't want to switch

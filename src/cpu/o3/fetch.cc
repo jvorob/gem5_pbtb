@@ -508,16 +508,32 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
 
     PBTBMap::PBTBResultType res;
     int breg = -1;
+    bool was_exhausted = false;
     uint64_t version = 0;
 
-    res = cpu->pbtb.queryFromFetch(inst->staticInst, next_pc, &breg, &version);
+    res = cpu->pbtb.queryFromFetch(inst->staticInst, next_pc,
+        &breg, &version, &was_exhausted);
 
     // Apply pred flags to see if we mispredicted later
     inst->setPredBTBReg(breg);
     inst->setPredBTBVersion(version);
-    inst->setPredBTBExhausted(res == PBTBMap::PBTBResultType::PR_Exhaust);
+    inst->setPredBTBExhausted(res == PBTBMap::PBTBResultType::PR_Exhaust ||
+                                was_exhausted);
 
     predict_taken = (res == PBTBMap::PBTBResultType::PR_Taken);
+
+    // Note: originally, an exhausted breg just means "not taken"
+    // but with the PBTB predictor, exhausted bregs will return a prediction
+    // (taken or not taken), and specify that the actual breg had been
+    // exhausted via `was_exhausted`. This is ugly but whatever.
+    // If we got a prediction on an exhausted branch, let's log it
+    if (was_exhausted && res != PBTBMap::PBTBResultType::PR_Exhaust) {
+        DPRINTF(Fetch, "Fetch PBTB got exhausted breg, [sn:%llu] b%d"
+            " going with predictor (predicts %s)\n",
+            inst->seqNum,
+            breg,
+            predict_taken ? "T": "NT");
+    }
 
     //Result will be one of PR_Taken,PR_NotTaken,PR_Exhaust,PR_NoMatch
     if (res == PBTBMap::PBTBResultType::PR_NoMatch) {

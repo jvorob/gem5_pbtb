@@ -123,6 +123,8 @@ class BmovTracker
  * FOR NOW: set synchronously at execute time (commit time?), no
  * handling for speculation/squashing
  */
+
+const bool PBTB_ENABLE_PREDICTOR = true;
 class PBTB
 {
   public:
@@ -136,7 +138,9 @@ class PBTB
     using utype =       PBTBMap::utype;
 
   public:
-    PBTB(CPU *_cpu): cpu(_cpu), tracker(this) {}
+    PBTB(CPU *_cpu): cpu(_cpu), tracker(this) {
+      clear_predictor();
+    }
 
 
     /** Returns the name of PBTB (for DPRINTF?) */
@@ -180,6 +184,16 @@ class PBTB
     // Note: map_fetch and map_finalize should ONLY EVER DIFFER in number
     // of loop iterations / shifted bits. All other modifications should apply
     // simultaneously to both. map_commit (once it's in) might differ though
+
+    // ======= PREDICTOR
+    // this is kindof a tacked-on hack, but it doesn't really matter I think?
+
+    // a set of saturating counters, one per breg
+    // from 0 (strong not taken) to 3 (strong taken)
+    int predictor_ctrs[NUM_REGS];
+    void clear_predictor();
+    void write_predictor(int breg, bool taken);
+    bool query_predictor(int breg);
 
     // ========= UNDO STUFF
     // Any methods that modify a pmap should return an undo_action, which
@@ -226,7 +240,7 @@ class PBTB
     //Note: if not taken, will advance pc
     PBTBResultType queryFromFetch(
             const StaticInstPtr inst, PCStateBase &pc,
-            int *p_breg_out, uint64_t *p_version_out);
+            int *p_breg_out, uint64_t *p_version_out, bool *p_exhaust_out);
 
     //Note: if not taken, will instead
     //advance pcAddr and return in targetAddr_out

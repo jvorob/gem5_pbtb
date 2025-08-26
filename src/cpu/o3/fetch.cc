@@ -542,57 +542,28 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     uint64_t version = 0;
 
     res = cpu->pbtb.queryFromFetch(inst->staticInst, next_pc,
-        &breg, &version, &was_exhausted);
+        vanilla_predict_taken, &breg, &version, &was_exhausted);
 
     // Apply pred flags to see if we mispredicted later
     inst->setPredBTBReg(breg);
     inst->setPredBTBVersion(version);
+    //// Note: originally, an exhausted breg just means "not taken"
+    //// but with the PBTB predictor, exhausted bregs will return a prediction
+    //// (taken or not taken), and specify that the actual breg had been
+    //// exhausted via `was_exhausted`. This is ugly but whatever.
     inst->setPredBTBExhausted(res == PBTBMap::PBTBResultType::PR_Exhaust ||
                                 was_exhausted);
 
+
+    // TODO: change this to be an explicit ` bool pred_taken`
     predict_taken = (res == PBTBMap::PBTBResultType::PR_Taken);
 
-    // Note: originally, an exhausted breg just means "not taken"
-    // but with the PBTB predictor, exhausted bregs will return a prediction
-    // (taken or not taken), and specify that the actual breg had been
-    // exhausted via `was_exhausted`. This is ugly but whatever.
-    // If we got a prediction on an exhausted branch, let's log it
-    if (was_exhausted) {
-        // Count how many fetched insts hit an exhausted breg
-        // (i.e. how many could have been helped by the pbtb predictor)
-        fetchStats.pbtbFetchExhausted++;
+    // Note: PBTB will factor in vanilla_pred_taken appropriately if that's the
+    //       current PBTB_PREDICTOR_CONF.
 
-        switch (PBTB_PREDICTOR_CONF) {
-            case PBTB_pred_conf_t::PBTB_Pred_None:
-                // With no predictor, PBTB returns exhaust, which we
-                // treat as not-taken
-                assert(res == PBTBMap::PBTBResultType::PR_Exhaust);
-                break;
-
-            case PBTB_pred_conf_t::PBTB_Pred_2bit:
-                // With the 2-bit predictor, PBTB instead will return
-                // PR_Taken or PR_NotTaken
-                DPRINTF(Fetch, "Fetch PBTB got exhausted breg, [sn:%llu] b%d"
-                    " going with 2-bit predictor (predicts %s)\n",
-                    inst->seqNum,
-                    breg,
-                    predict_taken ? "T": "NT");
-                break;
-            case PBTB_pred_conf_t::PBTB_Pred_vanilla:
-                // For vanilla predictor, overwrite PBTB's outcome
-                // with that from vanilla
-                predict_taken = vanilla_predict_taken;
-                DPRINTF(Fetch, "Fetch PBTB got exhausted breg, [sn:%llu] b%d"
-                    " going with vanilla predictor (predicts %s)\n",
-                    inst->seqNum,
-                    breg,
-                    predict_taken ? "T": "NT");
-                break;
-            default:
-                panic("unimplemented PBTB predictor option");
-        }
-
-    }
+    // Count how many fetched insts hit an exhausted breg
+    // (i.e. how many could have been helped by the pbtb predictor)
+    if (was_exhausted) { fetchStats.pbtbFetchExhausted++; }
 
 
     //Result will be one of PR_Taken,PR_NotTaken,PR_Exhaust,PR_NoMatch

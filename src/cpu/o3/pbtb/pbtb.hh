@@ -247,9 +247,10 @@ class PBTB
 
 
     // handles the PCstatebase nonsense, otherwise passthru to m_query_PC
-    //Note: if not taken, will advance pc
+    // Note: if not taken, will advance pc
     PBTBResultType queryFromFetch(
-            const StaticInstPtr inst, PCStateBase &pc,
+            const StaticInstPtr inst, PCStateBase &pc_inout,
+            bool vanilla_pred_taken,
             int *p_breg_out, uint64_t *p_version_out, bool *p_exhaust_out);
 
     //Note: if not taken, will instead

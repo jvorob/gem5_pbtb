@@ -664,7 +664,11 @@ void PBTB::squashFinalizeToFetch() {
     * Sets pc to target if taken, else inst->advancePC(pc), to better match
     * interface from branchpredictor
     * @param inst The branch instruction (used for advancePC)
-    * @param pc The predicted PC is passed back through this parameter.
+    * @param pc_inout The predicted PC is passed back through this parameter.
+    * @param vanilla_pred_taken We need to pass in the decision of the vanilla
+    *           branch predictor so PBTB can handle all the next_pc stuff in
+    *           one place, but still use the predictor for exhasuted branches.
+    *           Will only be used if PBTB_PREDICTOR_CONF is set for vanilla
     * @param p_breg_out breg is passed back here, or -1 if no match
     * @param p_version_out version for breg is passed back here
     * @param p_exhaust_out PREDICTOR HACK, this will be true if branch was exh.
@@ -674,6 +678,7 @@ void PBTB::squashFinalizeToFetch() {
     */
 PBTB::PBTBResultType PBTB::queryFromFetch(
             const StaticInstPtr inst, PCStateBase &pc_inout,
+            bool vanilla_pred_taken,
             int *p_breg_out, uint64_t *p_version_out, bool *p_exhaust_out) {
 
     Addr tgt = pc_inout.instAddr(); //will be overwritten if taken
@@ -691,6 +696,8 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
     // that? or is a bare object fine?
     // Old code: auto target=std::make_unique<GenericISA::SimplePCState<4>>();
 
+    bool pred_taken = (res == PBTBResultType::PR_Taken);
+
 
     // If we matched an exhausted breg, we might fallback to our predictor
     if (res == PBTBResultType::PR_Exhaust) {
@@ -698,34 +705,35 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
 
         switch (PBTB_PREDICTOR_CONF) {
             case PBTB_pred_conf_t::PBTB_Pred_None:
-                // If we've disabled the predictor, do nothing,
-                // just return PR_Exhaust
+                pred_taken = false;
                 break;
             case PBTB_pred_conf_t::PBTB_Pred_2bit:
-                // If we want to use the builtin 2-bit predictor, do that
-                // explicitly here, and return the predicted addr / result type
-                {
-                    bool pred = query_predictor(*p_breg_out);
-                    res = pred ? PBTBResultType::PR_Taken :
-                                PBTBResultType::PR_NotTaken;
-                    if (pred) { tgt = map_fetch.target[*p_breg_out]; }
-                }
+                pred_taken = query_predictor(*p_breg_out);
                 break;
             case PBTB_pred_conf_t::PBTB_Pred_vanilla:
-                // I guess we also do nothing here, since we let
-                // fetch handle this? (again just return exhaust)
-                // (god this is an ugly hack)
+                pred_taken = vanilla_pred_taken;
                 break;
             default:
                 panic("unimplemented PBTB predictor option");
         }
+
+        // If we were exhausted, the pbtb_map didn't change the tgt address,
+        // so we need to do that explicitly
+        if (pred_taken) { tgt = map_fetch.target[*p_breg_out]; }
+
+        // TODO: for now, return pred-taken branch as "PR_Taken", but really
+        // I think they should be returned as PR_Exhaust (state of the breg)
+        // and pred_taken is a separately-returned bool
+        res = pred_taken ? PBTBResultType::PR_Taken :
+                           PBTBResultType::PR_NotTaken;
     } else {
         *p_exhaust_out = false;
     }
 
+
     // ==== Prediction made: return to caller
     // Return next-fetched PC through pc_inout arg
-    if (res == PBTBResultType::PR_Taken){
+    if (pred_taken){
 
         // We need to set the next pc (normally a branch inst does this when
         //   it executes, in the generated isa code)
@@ -734,13 +742,17 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
         // We also need to advancePC so that we actually go to that next pc?
         // normally this would happen in IEW when it hits squashDueToBranch(),
         // so that the branch target is saved in .instAddr(), not in .npc()
+        // (normally this does pc+4, but because we explicitly set .npc(),
+        //  it instead does something like `pc = npc`)
         inst->advancePC(pc_inout);
 
     } else { //Else: no match, OR match found but not taken
-        // pc + 4 (probably)
+        // next_pc becoems pc + 4 (ish)
         inst->advancePC(pc_inout);
     }
 
+    // Note: if we're exhausted but using a predictor, we've manually
+    //       overwritten res to be PR_Taken or PT_NotTaken. TODO: change this
     return res;
 }
 

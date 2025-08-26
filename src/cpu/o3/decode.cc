@@ -878,11 +878,15 @@ Decode::decodeInsts(ThreadID tid)
         } else if (d_breg >= 0) {
             // There is a branch here:
 
-            if (PBTB_ENABLE_PREDICTOR) {
+            if (PBTB_PREDICTOR_CONF != PBTB_pred_conf_t::PBTB_Pred_None) {
                 // TEMP HACK: originally we verify that fetch EXACTLY matched
                 // up and squash if ANYTHING was wrong (exhausted, wrong
                 // version, etc). But actually, we only need to squash
                 // if address was wrong
+                // This is especially important if we're using a predictor,
+                // since then we're always fetching exhausted branches
+                // or old versions I think? (actually hmm, this might be more
+                // complicated)
                 if (d_targAddr != f_targAddr || d_taken != f_taken) {
                     mispred = true;
                     snprintf(mispredReason, sizeof(mispredReason),

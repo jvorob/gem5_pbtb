@@ -124,7 +124,17 @@ class BmovTracker
  * handling for speculation/squashing
  */
 
-const bool PBTB_ENABLE_PREDICTOR = false;
+enum class PBTB_pred_conf_t
+{
+  PBTB_Pred_None = 0,
+  PBTB_Pred_2bit,
+  PBTB_Pred_vanilla
+};
+
+const PBTB_pred_conf_t PBTB_PREDICTOR_CONF =
+                          PBTB_pred_conf_t::PBTB_Pred_vanilla;
+                          //PBTB_pred_conf_t::PBTB_Pred_2bit;
+                          //PBTB_pred_conf_t::PBTB_Pred_None;
 class PBTB
 {
   public:

@@ -196,6 +196,8 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
              "Ratio of cycles fetch was idle",
              idleCycles / cpu->baseStats.numCycles),
     /* ============ JV: PBTB Stats ========== */
+    ADD_STAT(pbtbFetchPredPb, statistics::units::Count::get(),
+            "Number of fetched insts predicted as a pb"),
     ADD_STAT(pbtbFetchExhausted, statistics::units::Count::get(),
             "Number of fetched insts that hit a valid but exhausted breg")
 {
@@ -493,6 +495,10 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     // this function updates it.
     bool predict_taken;
 
+    // We want to query the vanilla predictor every time so it can
+    // be accurate, but we'll only use it on exhausted branches
+    bool vanilla_predict_taken = false;
+
     //JV PBTB: everything needs to go through pbtb
     //if (!inst->isControl()) {
     //    inst->staticInst->advancePC(next_pc);
@@ -503,11 +509,32 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
 
     ThreadID tid = inst->threadNumber;
 
-    // ==== RUN THE PREDICTION
+    // ==== RUN THE PREDICTION (we want to do this for all pbs so the vanilla
+    // predictor can keep its history up to date)
+    if (PBTB_PREDICTOR_CONF == PBTB_pred_conf_t::PBTB_Pred_vanilla
+        && inst->isPb()) {
+        // grab a copy of the old pc, since the predictor normally overwrites
+        // next_pc with its predicted target, and we want
+        // to avoid that behavior (i.e. go with address from pbtb)
+
+        std::unique_ptr<PCStateBase> next_pc_copy(next_pc.clone());
+        vanilla_predict_taken = branchPred->predict(inst->staticInst,
+                inst->seqNum, * next_pc_copy, tid);
+
+        //TODO: check that the vanilla predictor's predicted target addr
+        // matches that of the PBTB? and ignore the result otherwise?
+        // don't see how it really matters though
+
+        // Note: we'll only use the taken/not_taken part of the prediction,
+        // and only if the PBTB claims it's an exhausted pb, but I guess
+        // we can be a little less dogmatic and magically only run predictions
+        // on actual pbs, since the vanilla branch predictor does that sort
+        // of thing anyway
+    }
+
+    // (original predictor code)
     //predict_taken = branchPred->predict(inst->staticInst, inst->seqNum,
-    //                                    next_pc, tid
-    //predict_taken = cpu->PBTB.isBranch(inst->staticInst, inst->seqNum,
-    //                                   next_pc, tid);
+    //                                    next_pc, tid);
 
     PBTBMap::PBTBResultType res;
     int breg = -1;
@@ -525,38 +552,67 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
 
     predict_taken = (res == PBTBMap::PBTBResultType::PR_Taken);
 
-    // Count how many fetched insts hit an exhausted breg
-    // (i.e. how many could have been helped by the pbtb predictor)
-    if (was_exhausted) { fetchStats.pbtbFetchExhausted++; }
-
     // Note: originally, an exhausted breg just means "not taken"
     // but with the PBTB predictor, exhausted bregs will return a prediction
     // (taken or not taken), and specify that the actual breg had been
     // exhausted via `was_exhausted`. This is ugly but whatever.
     // If we got a prediction on an exhausted branch, let's log it
-    if (was_exhausted && res != PBTBMap::PBTBResultType::PR_Exhaust) {
-        DPRINTF(Fetch, "Fetch PBTB got exhausted breg, [sn:%llu] b%d"
-            " going with predictor (predicts %s)\n",
-            inst->seqNum,
-            breg,
-            predict_taken ? "T": "NT");
+    if (was_exhausted) {
+        // Count how many fetched insts hit an exhausted breg
+        // (i.e. how many could have been helped by the pbtb predictor)
+        fetchStats.pbtbFetchExhausted++;
+
+        switch (PBTB_PREDICTOR_CONF) {
+            case PBTB_pred_conf_t::PBTB_Pred_None:
+                // With no predictor, PBTB returns exhaust, which we
+                // treat as not-taken
+                assert(res == PBTBMap::PBTBResultType::PR_Exhaust);
+                break;
+
+            case PBTB_pred_conf_t::PBTB_Pred_2bit:
+                // With the 2-bit predictor, PBTB instead will return
+                // PR_Taken or PR_NotTaken
+                DPRINTF(Fetch, "Fetch PBTB got exhausted breg, [sn:%llu] b%d"
+                    " going with 2-bit predictor (predicts %s)\n",
+                    inst->seqNum,
+                    breg,
+                    predict_taken ? "T": "NT");
+                break;
+            case PBTB_pred_conf_t::PBTB_Pred_vanilla:
+                // For vanilla predictor, overwrite PBTB's outcome
+                // with that from vanilla
+                predict_taken = vanilla_predict_taken;
+                DPRINTF(Fetch, "Fetch PBTB got exhausted breg, [sn:%llu] b%d"
+                    " going with vanilla predictor (predicts %s)\n",
+                    inst->seqNum,
+                    breg,
+                    predict_taken ? "T": "NT");
+                break;
+            default:
+                panic("unimplemented PBTB predictor option");
+        }
+
     }
+
 
     //Result will be one of PR_Taken,PR_NotTaken,PR_Exhaust,PR_NoMatch
     if (res == PBTBMap::PBTBResultType::PR_NoMatch) {
         // no-op: next_pc and predict_taken have already
         //        been set to the correct values (pc+4 and false)
     } else {
+        fetchStats.pbtbFetchPredPb++;
+
         // If !=NoMatch, breg should be valid
         assert(breg >= 0); // breg guaranteed to be valid
                            //
         //TODO: BETTER DEBUG LOGGING?
 
         if (predict_taken) {
-            DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch (b%d-v%d) at PC %#x "
+            const char *exh_str = inst->readPredBTBExhausted() ? "-EXH" : "";
+            DPRINTF(Fetch, "[tid:%i] [sn:%llu] Branch (b%d-v%d%s) at PC %#x "
                     "predicted to be taken to %s\n",
                     tid, inst->seqNum,
-                    breg, version,
+                    breg, version, exh_str,
                     inst->pcState().instAddr(), next_pc);
         } else {
             const char *exh_str = inst->readPredBTBExhausted() ? "-EXH" : "";

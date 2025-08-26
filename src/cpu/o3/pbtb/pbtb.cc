@@ -692,21 +692,32 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
     // Old code: auto target=std::make_unique<GenericISA::SimplePCState<4>>();
 
 
-    // If we matched an exhausted breg, let's assume it was
-    //       right and return a result according to the predictor
+    // If we matched an exhausted breg, we might fallback to our predictor
     if (res == PBTBResultType::PR_Exhaust) {
         *p_exhaust_out = true;
 
-        // If we've disabled the predictor, this will be skipped, and we'll
-        // just return PR_Exhaust, which counts as (I think) not taken
-        if (PBTB_ENABLE_PREDICTOR) {
-            bool pred = query_predictor(*p_breg_out);
-            res = pred ? PBTBResultType::PR_Taken :
-                         PBTBResultType::PR_NotTaken;
-
-            // hack: if exhausted, pbtb_map wouldn't set the addr, so
-            // we need to set it ourselves
-            if (pred) { tgt = map_fetch.target[*p_breg_out]; }
+        switch (PBTB_PREDICTOR_CONF) {
+            case PBTB_pred_conf_t::PBTB_Pred_None:
+                // If we've disabled the predictor, do nothing,
+                // just return PR_Exhaust
+                break;
+            case PBTB_pred_conf_t::PBTB_Pred_2bit:
+                // If we want to use the builtin 2-bit predictor, do that
+                // explicitly here, and return the predicted addr / result type
+                {
+                    bool pred = query_predictor(*p_breg_out);
+                    res = pred ? PBTBResultType::PR_Taken :
+                                PBTBResultType::PR_NotTaken;
+                    if (pred) { tgt = map_fetch.target[*p_breg_out]; }
+                }
+                break;
+            case PBTB_pred_conf_t::PBTB_Pred_vanilla:
+                // I guess we also do nothing here, since we let
+                // fetch handle this? (again just return exhaust)
+                // (god this is an ugly hack)
+                break;
+            default:
+                panic("unimplemented PBTB predictor option");
         }
     } else {
         *p_exhaust_out = false;
@@ -778,8 +789,8 @@ PBTB::PBTBResultType PBTB::queryFromDecode(
         // specific stuff), so I switched to using the existing pc_inout
         // and setting its .npc (see queryFromFetch).
         // However, it shouldn't matter here because we're only returning the
-        // address, and we're just using the PCState for a PC+4 that satisfies
-        // the type-checker.
+        // address, and we're just using the PCState for a PC+4 or PC+2 that
+        // satisfies the type-checker.
         auto tempAddr = GenericISA::SimplePCState<4>();
         tempAddr.set(pcAddr);
         inst->advancePC(tempAddr);

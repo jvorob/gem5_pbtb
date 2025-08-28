@@ -256,8 +256,8 @@ class PBTB
     //Note: if not taken, will instead
     //advance pcAddr and return in targetAddr_out
     PBTBResultType queryFromDecode(
-            const StaticInstPtr inst, Addr pcAddr, InstSeqNum seqnum,
-            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out);
+            const StaticInstPtr inst, PCStateBase &pc_inout, InstSeqNum seqnum,
+            int *p_breg_out, uint64_t *p_version_out);
 
 
     // Checks if breg is ready to finalize a bit-type branch

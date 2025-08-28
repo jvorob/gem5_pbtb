@@ -826,10 +826,17 @@ Decode::decodeInsts(ThreadID tid)
         bool     d_exhausted;
         bool     d_taken;
         Addr     d_targAddr = 0;
+
+        // Note: the address is an in-out param, so make sure to clone
+        //        the pc state if we don't want to clobber it
+        std::unique_ptr<PCStateBase> d_targPC(inst->pcState().clone());
+
         res = cpu->pbtb.queryFromDecode(inst->staticInst,
-                                        inst->pcState().instAddr(),
+                                        *d_targPC,
                                         inst->seqNum,
-                                        &d_breg, &d_version, &d_targAddr);
+                                        &d_breg, &d_version);
+
+        d_targAddr = d_targPC->instAddr();
         d_exhausted = (res == PBTB::PBTBResultType::PR_Exhaust);
         d_taken = (res == PBTB::PBTBResultType::PR_Taken);
 
@@ -920,6 +927,7 @@ Decode::decodeInsts(ThreadID tid)
                     inst->pcState().instAddr(), d_targAddr,
                     inst->seqNum,
                     d_breg, d_version);
+
             //TODO TEMP DEBUG
             // DPRINTF(Decode, "JV PBTB: FINALIZING: DEBUG INFO: @pc0x%x\n"
             //             "------------------d: b%dv%ld: %s%s, ->0x%x\n"
@@ -979,18 +987,15 @@ Decode::decodeInsts(ThreadID tid)
 
             ++stats.pbtbSquashes; // JV PBTB
 
+            // Store finalized branch outcome as prediction on inst. This
+            // isn't quite the right thing, but we need it in squash() to send
+            // back the corrected branch outcome to fetch's predictor
+            inst->setPredTarg(*d_targPC);
+            inst->setPredTaken(d_taken);
 
-            //Update to correct target
-            auto newPC = inst->readPredTarg().clone();
-            newPC->as<GenericISA::PCStateWithNext>().npc(d_targAddr);
-
-            //needed to move to next pc, npc becomes npc+4
-            newPC->as<GenericISA::PCStateWithNext>().advance();
-            inst->setPredTarg(*newPC);
-            delete newPC;
-
-
-            // squash overwrites pbtb to correct state (from finalize)
+            // squash overwrites fetch-pbtb to correct state (from finalize),
+            // squashes all incorrectly fetched insts,
+            // and updates fetch's branch predicotr
             squash(inst, inst->threadNumber);
 
             break;

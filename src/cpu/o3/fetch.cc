@@ -1050,8 +1050,19 @@ Fetch::checkSignalsAndUpdate(ThreadID tid)
         DPRINTF(Fetch, "[tid:%i] Squashing instructions due to squash "
                 "from decode.\n",tid);
 
+
         // Update the branch predictor.
         if (fromDecode->decodeInfo[tid].branchMispredict) {
+            // TODO: TEMP, JV PBTB
+            auto di = &fromDecode->decodeInfo[tid];
+            assert(di->mispredictInst->isPb());
+            const char* taken_str = fromDecode->decodeInfo[tid].branchTaken ?
+                "taken" : "not taken";
+            DPRINTF(Fetch, "[tid:%i] PBTB Updating fetch-predictor, "
+                    "branch %s, target PC 0x%x\n",
+                    tid,
+                    taken_str, fromDecode->decodeInfo[tid].nextPC->instAddr());
+
             branchPred->squash(fromDecode->decodeInfo[tid].doneSeqNum,
                     *fromDecode->decodeInfo[tid].nextPC,
                     fromDecode->decodeInfo[tid].branchTaken, tid);

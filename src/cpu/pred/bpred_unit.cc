@@ -405,8 +405,11 @@ BPredUnit::squash(const InstSeqNum &squashed_sn,
     ++stats.condIncorrect;
     ppMisses->notify(1);
 
+    // JV: adding a little info here
+    const char* taken_str = actually_taken ? "taken" : "not taken";
     DPRINTF(Branch, "[tid:%i] Squashing from sequence number %i, "
-            "setting target to %s\n", tid, squashed_sn, corr_target);
+            "setting target to %s, branch %s\n",
+            tid, squashed_sn, corr_target, taken_str);
 
     // Squash All Branches AFTER this mispredicted branch
     squash(squashed_sn, tid);

@@ -708,6 +708,9 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
                 pred_taken = false;
                 break;
             case PBTB_pred_conf_t::PBTB_Pred_2bit:
+                // TEMP DEBUG:
+                //DPRINTF(PBTB, "Exhausted pb: 2-bit predictor = (%d/3)\n",
+                //    predictor_ctrs[*p_breg_out]);
                 pred_taken = query_predictor(*p_breg_out);
                 break;
             case PBTB_pred_conf_t::PBTB_Pred_vanilla:
@@ -760,30 +763,35 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
 //Passthrough, queries the finalize/decode version of the map
 //NOTE: if not taken, will use inst to instead advance targetAddr_out
 //to nextPc
+
+// Note: pc_inout will be updated to the target of the pb. If you don't want
+// it clobbered, make sure you pass in a clone
 PBTB::PBTBResultType PBTB::queryFromDecode(
-            const StaticInstPtr inst,  Addr pcAddr, InstSeqNum seqnum,
-            int *p_breg_out, uint64_t *p_version_out, Addr *p_targetAddr_out) {
+            const StaticInstPtr inst,  PCStateBase &pc_inout,
+            InstSeqNum seqnum, int *p_breg_out, uint64_t *p_version_out) {
 
 
+    Addr inst_addr = pc_inout.instAddr();
+    Addr target_addr = 0;
 
-    PBTBResultType res = map_final.queryPC( pcAddr,
-            p_breg_out, p_version_out, p_targetAddr_out);
+    PBTBResultType res = map_final.queryPC(inst_addr,
+            p_breg_out, p_version_out, &target_addr);
 
-    // If the breg we query could be modified by hitting it with a pb, we need
-    // to make sure we save the breg's state
+    bool taken = (res == PBTBResultType::PR_Taken);
 
+    // Querying doesn't actually modify the pbtb_map, we need to explicitly
+    // consume any iterations and save that modification to the undo stack
     undo_action undo = map_final.consumeIter(*p_breg_out);
     if (undo.type != utype::U_NONE) {
-        // Undo type will only be non-None if we hit a loop or bit-branch
+        // We'll only actually have anything to undo if we hit a
+        // loop-type or bit-type branch
         savePrevState(*p_breg_out, seqnum, undo);
     }
 
-
-    // update the predictor from the pb we just verified (if we got an answer)
+    // update the 2-bit predictor from the pb we just verified
+    // (if it was a valid pb)
     if (res == PBTBResultType::PR_Taken ||
         res == PBTBResultType::PR_NotTaken) {
-
-        bool taken = (res == PBTBResultType::PR_Taken);
         write_predictor(*p_breg_out, taken);
         DPRINTF(PBTB, "PBTB: [sn:%llu] got pb b%d (%s) Updating predictor to "
             "%d/3\n",
@@ -791,22 +799,17 @@ PBTB::PBTBResultType PBTB::queryFromDecode(
             predictor_ctrs[*p_breg_out]);
     }
 
+    // Return next-fetched PC through pc_inout arg
+    if (res == PBTBResultType::PR_Taken){
+        // We need to set the next pc (normally a branch inst does this when
+        //   it executes, in the generated isa code), then advance
+        //   to make it the current pc (see queryFromFetch for details)
+        pc_inout.as<GenericISA::PCStateWithNext>().npc(target_addr);
+        inst->advancePC(pc_inout);
 
-    if (res != PBTBResultType::PR_Taken) {
-        // TODO: This is a horrible pile of hacks but I don't want to switch
-        // everything to use PCStates.
-
-        // ALSO NOTE: creating a generic PCState was the cause of a lot of
-        // bugs (PCstates track their instruction type/width, i.e. RV64-
-        // specific stuff), so I switched to using the existing pc_inout
-        // and setting its .npc (see queryFromFetch).
-        // However, it shouldn't matter here because we're only returning the
-        // address, and we're just using the PCState for a PC+4 or PC+2 that
-        // satisfies the type-checker.
-        auto tempAddr = GenericISA::SimplePCState<4>();
-        tempAddr.set(pcAddr);
-        inst->advancePC(tempAddr);
-        *p_targetAddr_out = tempAddr.instAddr();
+    } else { //Else: no match, OR match found but not taken
+        // next_pc becoems pc + 4 (ish)
+        inst->advancePC(pc_inout);
     }
 
     return res;

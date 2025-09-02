@@ -345,12 +345,50 @@ class Decode
         statistics::Scalar pbtbFinalizedPbs;
         // Number of pbtb squashes (due to a pb "mispredict" at fetch)
         statistics::Scalar pbtbSquashes;
-
         // Number of cycles spent blocked on a pb waiting for a bmov (total)
         statistics::Scalar pbtbBlockedCycles;
         // Number of cycles spent blocked for an incremental bmov
         //   (i.e. when the breg is valid, but exhausted of bits)
         statistics::Scalar pbtbBlockedExhaustCycles;
+        // Number of pbs that had to stall for at least a cycle
+        statistics::Scalar pbtbNumPbsThatBlocked;
+
+        // =============== PBTB: Finalize Outcomes: =============
+        // Each finalized pb falls into one of the 6 FinalState stats,
+        // so they should sum together to pbtbFinalizedPbs
+        // There are 3 options for how it came about in fetch,
+        // either it was ready (i.e. up to date info)
+        // or it was exhausted (correct version, type, source, target, but
+        // out of predictions)
+        // or it was on the wrong version (i.e. missing non-bit bmovs)
+        //
+        // Additionally: in each of these 3 cases, it's possible for the
+        // pb to have mispredicted or predicted correctly,
+        // which implies slightly different things in each case
+
+        // Number of pbs that had fetched with up-to-date pbtb info,
+        // and therefore came out correct in finalize
+        statistics::Scalar pbtbFinalState_ReadyCorr;
+
+        // Number of pbs that fetched with up-to-date pbtb info, but
+        // mispredicted (SHOULD BE 0? Only happen when fetch-pbtb desyncs)
+        statistics::Scalar pbtbFinalState_ReadyMisp;
+
+        // Number of pbs that were fetched as exhausted, but outcome was
+        // predicted correctly
+        statistics::Scalar pbtbFinalState_ExhaustedCorr;
+        // Number of pbs that were fetched as exhausted, but the branch
+        // predictor mispredicted
+        statistics::Scalar pbtbFinalState_ExhaustedMisp;
+
+        // Number of pbs that fetched with an outdated pbtb entry,
+        // but that coincidentally had the right outcome. (SHOULD BE CLOSE
+        // TO 0? Almost always lead to desync on subsequent pbs?)
+        statistics::Scalar pbtbFinalState_WrongVersionCorr;
+
+        // Number of pbs that fetched with an outdated pbtb entry,
+        // and were squashed as a result.
+        statistics::Scalar pbtbFinalState_WrongVersionMisp;
     } stats;
 };
 

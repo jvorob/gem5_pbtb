@@ -196,8 +196,10 @@ Fetch::FetchStatGroup::FetchStatGroup(CPU *cpu, Fetch *fetch)
              "Ratio of cycles fetch was idle",
              idleCycles / cpu->baseStats.numCycles),
     /* ============ JV: PBTB Stats ========== */
-    ADD_STAT(pbtbFetchPredPb, statistics::units::Count::get(),
+    ADD_STAT(pbtbFetchPredPbs, statistics::units::Count::get(),
             "Number of fetched insts predicted as a pb"),
+    ADD_STAT(pbtbFetchImaginedPbs, statistics::units::Count::get(),
+            "Number of fetched insts predicted as a pb that were not pbs"),
     ADD_STAT(pbtbFetchExhausted, statistics::units::Count::get(),
             "Number of fetched insts that hit a valid but exhausted breg")
 {
@@ -592,7 +594,11 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     } else { // We hit something in the PBTB
         assert(breg >= 0); // breg only 0 if nomatch
 
-        fetchStats.pbtbFetchPredPb++;
+
+        fetchStats.pbtbFetchPredPbs++;
+        if (!inst->isPb()) {
+            fetchStats.pbtbFetchImaginedPbs++;
+        }
 
         if (predict_taken) {
             const char *exh_str = was_exhausted ? "-EXH" : "";

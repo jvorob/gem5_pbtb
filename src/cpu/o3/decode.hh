@@ -352,6 +352,9 @@ class Decode
         statistics::Scalar pbtbBlockedExhaustCycles;
         // Number of pbs that had to stall for at least a cycle
         statistics::Scalar pbtbNumPbsThatBlocked;
+        // Number of finalized non-pb insts that had predicted as pbs
+        // (finalizedPbs+imaginedPbs should sum to the 6 finalStates)
+        statistics::Scalar pbtbFinalizedImaginedPbs;
 
         // =============== PBTB: Finalize Outcomes: =============
         // Each finalized pb falls into one of the 6 FinalState stats,
@@ -389,6 +392,7 @@ class Decode
         // Number of pbs that fetched with an outdated pbtb entry,
         // and were squashed as a result.
         statistics::Scalar pbtbFinalState_WrongVersionMisp;
+
     } stats;
 };
 

@@ -160,7 +160,9 @@ Decode::DecodeStats::DecodeStats(CPU *cpu)
                "(i.e. when the breg is valid, but exhausted of bits)"),
       ADD_STAT(pbtbNumPbsThatBlocked, statistics::units::Count::get(),
                "Number of pbs that had to stall for at least a cycle"),
-
+      ADD_STAT(pbtbFinalizedImaginedPbs, statistics::units::Count::get(),
+               "Number of finalized non-pb insts that had predicted as pbs "
+               "(FinalizedPbs+ImaginedPbs should sum to the 6 FinalStates)"),
 
         // =============== PBTB: Finalize Outcomes: =============
       ADD_STAT(pbtbFinalState_ReadyCorr, statistics::units::Count::get(),
@@ -955,6 +957,11 @@ Decode::decodeInsts(ThreadID tid)
             // Case 1: Fetch has reaaaally out of date info, either predicting
             //     an unrelated branch / wrong version, or missing it entirely
 
+            if (f_breg >= 0 && d_breg < 0) {
+                // Fetch imagined a pb where there should be none
+                stats.pbtbFinalizedImaginedPbs++;
+            }
+
 
             if (FORBID_VERSION_MISMATCH || wrong_outcome) {
                 stats.pbtbFinalState_WrongVersionMisp++;
@@ -1033,37 +1040,36 @@ Decode::decodeInsts(ThreadID tid)
                     inst->seqNum,
                     d_breg, d_version);
 
-            if (d_breg > 0) {
-                if (!mispred) { // We correctly took a pb
-                    assert(d_taken == f_taken);
-                    assert(!d_taken || (d_targAddr == f_targAddr));
-                    ++stats.pbtbFinalizedPbs;
+            ++stats.pbtbFinalizedPbs;
 
-                    //TODO: Original code had:
-                    //     ++stats.branchResolved;
-                } else {
-                    // we mispredcted in one of many complicated ways
+            if (!mispred) { // We correctly took a pb
+                assert(d_taken == f_taken);
+                assert(!d_taken || (d_targAddr == f_targAddr));
 
-                    // ORIGINAL CODE HAD THIS, but now there's cases where
-                    // we mispredict and there's wasnt a pb, so this
-                    // doesn't work?
+                //TODO: Original code had:
+                //     ++stats.branchResolved;
+            } else {
+                // we mispredcted in one of many complicated ways
 
-                    //++stats.branchMispred;
+                // ORIGINAL CODE HAD THIS, but now there's cases where
+                // we mispredict and there's wasnt a pb, so this
+                // doesn't work?
 
-                    //// Might want to set some sort of boolean and just do
-                    //// a check at the end
-                    //squash(inst, inst->threadNumber);
+                //++stats.branchMispred;
 
-                    //DPRINTF(Decode,
-                    //    "[tid:%i] [sn:%llu] "
-                    //    "Updating predictions: Wrong predicted target: "
-                    //    "%s PredPC: %s\n",
-                    //    tid, inst->seqNum, inst->readPredTarg(), *target);
-                    ////The micro pc after an instruction level branch
-                    ////should be 0
-                    //inst->setPredTarg(*target);
-                    //break;
-                }
+                //// Might want to set some sort of boolean and just do
+                //// a check at the end
+                //squash(inst, inst->threadNumber);
+
+                //DPRINTF(Decode,
+                //    "[tid:%i] [sn:%llu] "
+                //    "Updating predictions: Wrong predicted target: "
+                //    "%s PredPC: %s\n",
+                //    tid, inst->seqNum, inst->readPredTarg(), *target);
+                ////The micro pc after an instruction level branch
+                ////should be 0
+                //inst->setPredTarg(*target);
+                //break;
             }
         }
 

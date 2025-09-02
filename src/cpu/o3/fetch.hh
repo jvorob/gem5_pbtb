@@ -577,7 +577,9 @@ class Fetch
         statistics::Formula idleRate;
         /* ============ JV: PBTB Stats ========== */
         // Number of fetched insts predicted as a pb
-        statistics::Scalar pbtbFetchPredPb;
+        statistics::Scalar pbtbFetchPredPbs;
+        // Number of fetched insts predicted as a pb that were not pbs
+        statistics::Scalar pbtbFetchImaginedPbs;
         // Number of fetched insts that hit a valid but exhausted breg
         statistics::Scalar pbtbFetchExhausted;
     } fetchStats;

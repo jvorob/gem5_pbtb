@@ -127,14 +127,10 @@ class BmovTracker
 enum class PBTB_pred_conf_t
 {
   PBTB_Pred_None = 0,
-  PBTB_Pred_2bit,
-  PBTB_Pred_vanilla
+  PBTB_Pred_Two_Bit,
+  PBTB_Pred_Vanilla
 };
 
-const PBTB_pred_conf_t PBTB_PREDICTOR_CONF =
-                          PBTB_pred_conf_t::PBTB_Pred_vanilla;
-                          //PBTB_pred_conf_t::PBTB_Pred_2bit;
-                          //PBTB_pred_conf_t::PBTB_Pred_None;
 class PBTB
 {
   public:
@@ -150,6 +146,31 @@ class PBTB
   public:
     PBTB(CPU *_cpu): cpu(_cpu), tracker(this) {
       clear_predictor();
+
+
+      CONF_PREDICTOR = PBTB_pred_conf_t::PBTB_Pred_None; // default
+      const char* env_pred = std::getenv("PBTB_CONF_PREDICTOR");
+      if (env_pred == NULL || strcmp(env_pred, "") == 0) {
+        // noop?
+      } else if (strcmp(env_pred, "NONE"   ) == 0) {
+        CONF_PREDICTOR = PBTB_pred_conf_t::PBTB_Pred_None;
+      } else if (strcmp(env_pred, "TWOBIT" ) == 0) {
+        CONF_PREDICTOR = PBTB_pred_conf_t::PBTB_Pred_Two_Bit;
+      } else if (strcmp(env_pred, "VANILLA") == 0) {
+        CONF_PREDICTOR = PBTB_pred_conf_t::PBTB_Pred_Vanilla;
+      } else {
+        panic("Unexpected value for env-var PBTB_CONF_PREDICTOR: "
+              "Expected one of NONE, TWOBIT, or VANILLA\n");
+      }
+
+      // If fetch hits an old version of a breg or a wrong breg,
+      //   it's likely to soon desync, but the prediction might have been
+      //   correct by coincidence. We could allow that to pass,
+      //   or squash dogmatically to prevent desync.
+      // Forbids version mismatch by default
+      const char* env_vers = std::getenv("PBTB_CONF_ALLOW_VERSION_MISMATCH");
+      bool allow_version_mismatch = (env_vers != NULL);
+      CONF_FORBID_VERSION_MISMATCH = !allow_version_mismatch;
     }
 
 
@@ -158,6 +179,11 @@ class PBTB
 
     // Maybe not the best place for it, but it's nice to have
     const static int NUM_REGS = NUM_PBTB_REGS;
+
+    // === Static-ish config options, will be set from env-vars
+    PBTB_pred_conf_t CONF_PREDICTOR;
+    bool CONF_FORBID_VERSION_MISMATCH;
+    //bool CONF_FORBID_EXHAUST;
 
   private:
     /** CPU Interface */

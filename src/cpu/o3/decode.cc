@@ -930,12 +930,8 @@ Decode::decodeInsts(ThreadID tid)
         // no-predictor pbtb, since treating exhausted pbs as not-taken can
         // also coincidentally be correct.
         const bool FORBID_EXHAUST_FETCH =
-            (PBTB_PREDICTOR_CONF == PBTB_pred_conf_t::PBTB_Pred_None);
+            (cpu->pbtb.CONF_PREDICTOR == PBTB_pred_conf_t::PBTB_Pred_None);
 
-        // NOTE: also, if fetch hit an old version or a wrong breg, it's likely
-        //   to soon desync, but might also be coincidentally correct. Should
-        //   we also squash in that case even if the prediction was right?
-        const bool FORBID_VERSION_MISMATCH = true;
 
         // Keep track of nextPC outcome separately from whether we will squash.
         if (d_targAddr != f_targAddr || d_taken != f_taken) {
@@ -944,7 +940,6 @@ Decode::decodeInsts(ThreadID tid)
                     "fetch went to wrong pc: f->0x%lx, d->0x%lx",
                     f_targAddr, d_targAddr);
         }
-
 
 
         // Now: figure it out what the situation of the branch was between
@@ -963,7 +958,11 @@ Decode::decodeInsts(ThreadID tid)
             }
 
 
-            if (FORBID_VERSION_MISMATCH || wrong_outcome) {
+            // NOTE: also, if fetch hit an old version or a wrong breg,
+            //   it's likely to soon desync, but might also be coincidentally
+            //   correct. Should we also squash in that case even if the
+            //   prediction was right? (config determines it)
+            if (cpu->pbtb.CONF_FORBID_VERSION_MISMATCH || wrong_outcome) {
                 stats.pbtbFinalState_WrongVersionMisp++;
                 mispred = true;
                 snprintf(mispredReason, sizeof(mispredReason),

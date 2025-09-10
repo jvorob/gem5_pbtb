@@ -523,7 +523,7 @@ Fetch::lookupAndUpdateNextPC(const DynInstPtr &inst, PCStateBase &next_pc)
     // Tehcnically the predictor should run on all insts, but given that
     // gem5 already magically only runs prediction on branches, we can
     // also do the same for pbs
-    if (PBTB_PREDICTOR_CONF == PBTB_pred_conf_t::PBTB_Pred_vanilla
+    if (cpu->pbtb.CONF_PREDICTOR == PBTB_pred_conf_t::PBTB_Pred_Vanilla
         && inst->isPb()) {
 
         // Note: prediction clobbers the passed-in pcstate, so make sure

@@ -703,17 +703,17 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
     if (res == PBTBResultType::PR_Exhaust) {
         *p_exhaust_out = true;
 
-        switch (PBTB_PREDICTOR_CONF) {
+        switch (CONF_PREDICTOR) {
             case PBTB_pred_conf_t::PBTB_Pred_None:
                 pred_taken = false;
                 break;
-            case PBTB_pred_conf_t::PBTB_Pred_2bit:
+            case PBTB_pred_conf_t::PBTB_Pred_Two_Bit:
                 // TEMP DEBUG:
                 //DPRINTF(PBTB, "Exhausted pb: 2-bit predictor = (%d/3)\n",
                 //    predictor_ctrs[*p_breg_out]);
                 pred_taken = query_predictor(*p_breg_out);
                 break;
-            case PBTB_pred_conf_t::PBTB_Pred_vanilla:
+            case PBTB_pred_conf_t::PBTB_Pred_Vanilla:
                 pred_taken = vanilla_pred_taken;
                 break;
             default:

@@ -229,10 +229,25 @@ class PBTBMap
 //
 // ==============================================================
   public:
-    PBTBMap(const std::string dbgId) : dbgId(dbgId) {};
+    PBTBMap(const std::string dbgId, bool isUndoable) :
+        dbgId(dbgId), isUndoable(isUndoable) {
+
+        for (int i = 0; i <NUM_REGS; i++) {
+            cond_type[i] = BranchType::NoBranch;
+            version[i] = -1;
+        }
+
+    };
 
     const std::string dbgId;
+
   private:
+    // NOTE: if we don't need the PBTB to support undo, we can loosen a lot
+    //  of constraints on it. Since the fetch-PBTB squashes by being
+    //  overwritten fully, only the finalize-pbtb needs to support undo
+    //  (unwindSquash), so the fetch-PBTB can drop that requirement and
+    //  implement other features (exhaust-consume) more easily
+    const bool isUndoable;
 
     // Member data fields
     int64_t    version      [NUM_REGS] = {};
@@ -251,12 +266,6 @@ class PBTBMap
     //UndoToken applyAction(PBTBAction action); w
 
   public:
-    PBTBMap() {
-        for (int i = 0; i <NUM_REGS; i++) {
-            cond_type[i] = BranchType::NoBranch;
-            version[i] = -1;
-        }
-    }
 
     void setFrom(const PBTBMap &other) {
         for (int i = 0; i < NUM_REGS; ++i) {
@@ -267,7 +276,7 @@ class PBTBMap
             cond_val[i]     = other.cond_val[i];
             cond_aux_val[i] = other.cond_aux_val[i];
         }
-        // Note: dbgId is not copied
+        // Note: dbgId and isUndoable is not copied
     };
 
     undo_action setSource(int breg, Addr source_addr);

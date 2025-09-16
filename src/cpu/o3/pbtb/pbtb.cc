@@ -779,6 +779,13 @@ PBTB::PBTBResultType PBTB::queryFromDecode(
 
     bool taken = (res == PBTBResultType::PR_Taken);
 
+    // At decode time, we should never (?) query an exhausted breg
+    // since we will have stalled first: (see comment at call site in decode)
+    // However, this may need to change if we expand to allow that and
+    // raise an exception, in which case we'll need to make sure we don't
+    // consume an iteration (since decode pbtb should never go negative?)
+    assert(res != PBTBResultType::PR_Exhaust);
+
     // Querying doesn't actually modify the pbtb_map, we need to explicitly
     // consume any iterations and save that modification to the undo stack
     undo_action undo = map_final.consumeIter(*p_breg_out);

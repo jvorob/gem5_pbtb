@@ -196,21 +196,61 @@ PBTBMap::undo_action PBTBMap::setCondition(
             assert(n > 0 && n <= 64); //PBTB shiftbits must be in [1-64]
 
             {
-            // mask out bottom n bits (I should probably use a macro for this)
-            uint64_t bottom_n_bits = n >= 64 ? val : val & ((1L<<n)-1);
 
             // Bits shifted out at LSB, shifted in at bit N,
             // where N is current size of array
             // e.g. if curr_size == e.g. 3 bits, next bit comes in at bit 3
 
-            cond_val[breg] |= bottom_n_bits <<
-                                cond_aux_val[breg];
-            cond_aux_val[breg] += n; // num_bits+=n
+            // mask out bottom bits sow we don't accidentally `or` in
+            // some garbage into the register
+            // (I should probably use a macro for this)
+            uint64_t bottom_n_bits = n >= 64 ? val : val & ((1L<<n)-1);
+
+            // If there are any exhausted bits, we first discard up to
+            // that many off the incoming bits
+            int bits_to_drop = 0;
+            if (cond_aux_val[breg] < 0) {
+                DPRINTF(PBTB, "PBTB (%sX): bmovc_bit b%d: was past-exhaustion "
+                              "at %d, pushing %d bits\n",
+                              dbgId, breg, cond_aux_val[breg], n);
+                bits_to_drop = std::min(-cond_aux_val[breg], n);
+                assert(bits_to_drop >= 0);
+                bottom_n_bits >>= bits_to_drop; // take from LSB
+                n -= bits_to_drop; // any remaining may still be pushed
+                cond_aux_val[breg] += bits_to_drop;
+                DPRINTF(PBTB, "PBTB (%sX): - continued: DEBUG: "
+                              "dropping %d of the incoming bits, "
+                              "cond_aux_val now at %d; "
+                              "%d remaining bits will be added\n",
+                            dbgId, bits_to_drop, cond_aux_val[breg], n);
+
+                // can at most have cancelled out, shouldn't go past zero
+                assert(n >= 0);
+                assert(cond_aux_val[breg] <= 0);
+            }
+
+
+            // At this point, if we dropped any bits, both `n`
+            // and bottom_n_bits have been adjusted accordingly
+
+
+            if (n > 0) {
+                // Even if the breg had negative bits (past-ehxaustion), if
+                // we still have bits left to push (n) after this, then
+                // we must have fully cleared them by now
+                assert(cond_aux_val[breg] >= 0);
+
+
+                // add the remaining bits to the end of the bitvec
+                cond_val[breg] |= bottom_n_bits << cond_aux_val[breg];
+                cond_aux_val[breg] += n; // num_bits+=n
+            }
 
             uint64_t bits = cond_val[breg];
-            uint64_t numbits = cond_aux_val[breg];
-            DPRINTF(PBTB, "PBTB (X): bmovc_bit b%d: data{%s}(%d)\n",
-                    breg, debugPrintBottomBits(bits,numbits).c_str(), numbits);
+            int64_t numbits = cond_aux_val[breg];
+            DPRINTF(PBTB, "PBTB (%sX): bmovc_bit: b%d now has data{%s}(%d)\n",
+                    dbgId, breg,
+                    debugPrintBottomBits(bits,numbits).c_str(), numbits);
 
             }
 
@@ -294,7 +334,7 @@ PBTBMap::PBTBResultType PBTBMap::queryPC( Addr pcAddr,
 
     } else if (brType == BranchType::ShiftBit) {
         uint64_t bits = cond_val[breg];
-        uint64_t numbits = cond_aux_val[breg];
+        int64_t numbits = cond_aux_val[breg];
         DPRINTF(PBTB, "PBTB (%s): HIT b%d: BIT{%s} (%s) 0x%x -?> 0x%x\n",
                 dbgId, breg,
                 debugPrintBottomBits(bits,numbits).c_str(),
@@ -351,6 +391,22 @@ PBTBMap::undo_action PBTBMap::consumeIter(int breg)
 
             cond_val[breg] >>= 1; // shift bits down 1
             cond_aux_val[breg]--; // num_bits--
+
+        } else { // <= 0 bits
+            // TEMP DEBUG (this should happen in fetch pbtb but not in
+            // decode?)
+            //DPRINTF(PBTB, "PBTB (%s): Consuming iter from exhausted\n",
+            //                dbgId);
+            //panic("Making sure this triggers");
+
+            // We're consuming from an exhausted or past-exhausted
+            // breg: this should
+            // only be allowed in the fetch-pbtb, (see pbtb_map.isUndoable)
+            // since I don't want to implement undo logic
+
+            assert(!isUndoable);
+            // ret_undo can stay as a blank undo, so don't worry about it
+            cond_aux_val[breg]--; // num_bits--
         }
 
     } else {
@@ -361,9 +417,12 @@ PBTBMap::undo_action PBTBMap::consumeIter(int breg)
 }
 
 void PBTBMap::apply_undo(struct undo_action und) {
+
     DPRINTF(PBTB, "PBTBMap (%s), Undoing: %s\n",
                 dbgId, undoActionToString(und));
 
+    // should only call apply_undo on the finalize-pbtb
+    assert(isUndoable);
     // We can only apply it if the versions match
     assert(version[und.breg] == und.done_ver);
 

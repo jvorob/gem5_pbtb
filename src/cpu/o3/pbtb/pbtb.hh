@@ -214,8 +214,9 @@ class PBTB
     // ==================== PBTB Maps:
     // If the system wasn't pipelined, one of these would be sufficient
 
-    PBTBMap map_fetch{"F"};
-    PBTBMap map_final{"D"}; // init to all 0s
+    // Only decode-pbtb supports undo
+    PBTBMap map_fetch{"F", false};
+    PBTBMap map_final{"D", true}; // init to all 0s
 
     // Note: map_fetch and map_finalize should ONLY EVER DIFFER in number
     // of loop iterations / shifted bits. All other modifications should apply

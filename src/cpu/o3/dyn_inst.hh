@@ -329,6 +329,10 @@ class DynInst : public ExecContext, public RefCounted
     bool predBTBExhausted; //JV: technically should be a flag but I'd rather
                            //    keep them all in one place
 
+    // What happened in finalize:
+    bool predBTBDidBlock = 0;
+    // END JV PBTB INFO
+
     /** The Macroop if one exists */
     const StaticInstPtr macroop;
 
@@ -540,6 +544,9 @@ class DynInst : public ExecContext, public RefCounted
 
     void setPredBTBExhausted(bool exh) { predBTBExhausted = exh; }
     bool readPredBTBExhausted() const  { return predBTBExhausted; }
+
+    void setPredBTBDidBlock(bool b) { predBTBDidBlock = b; }
+    bool readPredBTBDidBlock() const  { return predBTBDidBlock; }
     // ==== END PBTB prediction info
 
 

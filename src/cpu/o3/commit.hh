@@ -490,6 +490,12 @@ class Commit
 
         /** Number of cycles where the commit bandwidth limit is reached. */
         statistics::Scalar commitEligibleSamples;
+
+        /*************** JV PBTB **********************/
+        // Total number of pbs committed
+        statistics::Scalar commitPBTBNumPbs;
+        // Number of pbs that had to stall in finalize for at least a cycle
+        statistics::Scalar commitPBTBNumPbsThatBlocked;
     } stats;
 };
 

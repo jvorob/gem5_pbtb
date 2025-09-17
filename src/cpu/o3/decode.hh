@@ -344,14 +344,12 @@ class Decode
         // Number of pb insts that pass the finalize point
         statistics::Scalar pbtbFinalizedPbs;
         // Number of pbtb squashes (due to a pb "mispredict" at fetch)
+        statistics::Scalar pbtbFinalizedPbsThatBlocked;
+        // Number of finalized pbs that had to stall at least a cycle
+        // for in-flight bmovs
         statistics::Scalar pbtbSquashes;
         // Number of cycles spent blocked on a pb waiting for a bmov (total)
         statistics::Scalar pbtbBlockedCycles;
-        // Number of cycles spent blocked for an incremental bmov
-        //   (i.e. when the breg is valid, but exhausted of bits)
-        statistics::Scalar pbtbBlockedExhaustCycles;
-        // Number of pbs that had to stall for at least a cycle
-        statistics::Scalar pbtbNumPbsThatBlocked;
         // Number of finalized non-pb insts that had predicted as pbs
         // (finalizedPbs+imaginedPbs should sum to the 6 finalStates)
         statistics::Scalar pbtbFinalizedImaginedPbs;

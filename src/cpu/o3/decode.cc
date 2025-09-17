@@ -151,15 +151,13 @@ Decode::DecodeStats::DecodeStats(CPU *cpu)
                "Number of bmov insts that pass the finalize point"),
       ADD_STAT(pbtbFinalizedPbs, statistics::units::Count::get(),
                "Number of pb insts that pass the finalize point"),
+      ADD_STAT(pbtbFinalizedPbsThatBlocked, statistics::units::Count::get(),
+               "Number of finalized pbs that had to stall at least a cycle "
+               "for in-flight bmovs"),
       ADD_STAT(pbtbSquashes, statistics::units::Count::get(),
                "Number of pbtb squashes (due to a pb 'mispredict' at fetch)"),
       ADD_STAT(pbtbBlockedCycles, statistics::units::Count::get(),
                "Number of cycles spent blocked on a pb waiting for a bmov"),
-      ADD_STAT(pbtbBlockedExhaustCycles, statistics::units::Count::get(),
-               "Number of cycles spent blocked for an incremental bmov "
-               "(i.e. when the breg is valid, but exhausted of bits)"),
-      ADD_STAT(pbtbNumPbsThatBlocked, statistics::units::Count::get(),
-               "Number of pbs that had to stall for at least a cycle"),
       ADD_STAT(pbtbFinalizedImaginedPbs, statistics::units::Count::get(),
                "Number of finalized non-pb insts that had predicted as pbs "
                "(FinalizedPbs+ImaginedPbs should sum to the 6 FinalStates)"),
@@ -629,7 +627,8 @@ Decode::checkSignalsAndUpdate(ThreadID tid)
                            "(in checkSignalsAndUpdate)\n",
                     inst->seqNum, tid);
             ++stats.pbtbBlockedCycles;
-            // Note: we don't update pbtbNumPbsThatBlocked here
+            inst->setPredBTBDidBlock(true); // we may set this multiple times,
+            // (also in decodeInsts), but we'll be sure we marked them all
             return block(tid);
         }
     }
@@ -802,10 +801,9 @@ Decode::decodeInsts(ThreadID tid)
                     inst->seqNum, tid);
 
             ++stats.pbtbBlockedCycles;
-
-            // for each pb, when it first stalls, increment this, but
-            // not in checkSignalsAndUpdate
-            ++stats.pbtbNumPbsThatBlocked;
+            inst->setPredBTBDidBlock(true); // we also set this in
+            // checkSignalsAndUpdate, since it may have blocked there
+            // but be ready by the time we get here?
 
             //DPRINTF(Decode,"[tid:%i] Stalling inst %d, readPredBTBreg:%d, "
             //               "isControl:%d, isBmov:%d\n",
@@ -1040,6 +1038,9 @@ Decode::decodeInsts(ThreadID tid)
                     d_breg, d_version);
 
             ++stats.pbtbFinalizedPbs;
+            if (inst->readPredBTBDidBlock()) {
+                ++stats.pbtbFinalizedPbsThatBlocked;
+            }
 
             if (!mispred) { // We correctly took a pb
                 assert(d_taken == f_taken);

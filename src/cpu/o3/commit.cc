@@ -165,7 +165,12 @@ Commit::CommitStats::CommitStats(CPU *cpu, Commit *commit)
       ADD_STAT(committedInstType, statistics::units::Count::get(),
                "Class of committed instruction"),
       ADD_STAT(commitEligibleSamples, statistics::units::Cycle::get(),
-               "number cycles where commit BW limit reached")
+               "number cycles where commit BW limit reached"),
+      // ===================== JV PBTB ==============================
+      ADD_STAT(commitPBTBNumPbs, statistics::units::Count::get(),
+               "Total number of pbs committed"),
+      ADD_STAT(commitPBTBNumPbsThatBlocked, statistics::units::Count::get(),
+               "Number of pbs that had to stall for at least a cycle")
 {
     using namespace statistics;
 
@@ -976,6 +981,14 @@ Commit::commitInsts()
                     ->committedInstType[head_inst->opClass()]++;
                 stats.committedInstType[tid][head_inst->opClass()]++;
                 ppCommit->notify(head_inst);
+
+
+                // ===== JV PBTB:
+                if (head_inst->isPb()) {
+                    stats.commitPBTBNumPbs++;
+                    if (head_inst->readPredBTBDidBlock())
+                        { stats.commitPBTBNumPbsThatBlocked++; }
+                }
 
                 // hardware transactional memory
 

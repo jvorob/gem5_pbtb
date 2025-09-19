@@ -191,7 +191,11 @@ IEW::IEWStats::IEWStats(CPU *cpu)
              "Insts written-back per cycle"),
     ADD_STAT(wbFanout, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Count>::get(),
-             "Average fanout of values written-back")
+             "Average fanout of values written-back"),
+
+    // JV PBTB
+    ADD_STAT(vnsBlockedCycles, statistics::units::Count::get(),
+             "(PBTB/VNS) Total cycles spent blocking for an unexecuted branch")
 {
     instsToCommit
         .init(cpu->numThreads)
@@ -684,6 +688,7 @@ IEW::checkStall(ThreadID tid)
         DPRINTF(IEW, "[tid:%i] Stall: (PBTB) branch [sn:%d]"
             " is still not executed\n",
         tid, branchInFlightSN);
+        ++iewStats.vnsBlockedCycles;
         ret_val = true;
     }
 
@@ -944,6 +949,7 @@ IEW::dispatchInsts(ThreadID tid)
             DPRINTF(IEW, "[tid:%i], Issue: (PBTB) blocking for branch ahead "
                 " with [sn:%d]\n",
                 tid, branchInFlightSN);
+            ++iewStats.vnsBlockedCycles;
             block(tid);
             break;
         }

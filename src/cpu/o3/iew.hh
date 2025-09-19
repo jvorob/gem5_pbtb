@@ -480,6 +480,10 @@ class IEW
         statistics::Formula wbRate;
         /** Average number of woken instructions per writeback. */
         statistics::Formula wbFanout;
+
+        // JV PBTB
+        statistics::Scalar vnsBlockedCycles;
+        /** Total cycles spent blocking for an unexecuted branch */
     } iewStats;
 };
 

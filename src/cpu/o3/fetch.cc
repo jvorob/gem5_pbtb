@@ -1254,9 +1254,9 @@ Fetch::fetch(bool &status_change)
             numInst++;
 
 #if TRACING_ON
-            if (debug::O3PipeView) {
+            //if (debug::O3PipeView) { // JV PBTB: set these regardless
                 instruction->fetchTick = curTick();
-            }
+            //}
 #endif
 
             set(next_pc, this_pc);

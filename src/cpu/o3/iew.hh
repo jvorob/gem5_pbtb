@@ -474,6 +474,17 @@ class IEW
         statistics::Formula wbRate;
         /** Average number of woken instructions per writeback. */
         statistics::Formula wbFanout;
+
+        // ======== JV PBTB ============
+        /** Total of number of cycles latency between fetch and execute across
+            all mispredicted branches (e.g. total branch penalty in cycles) */
+        statistics::Scalar vanillaBranchPenaltyCyclesFromFetch;
+        /** Total of number of cycles latency between dispatch and execute
+         * across all mispredicted branches. This ignores time when a branch
+         * is spent stalled in the frontend, so fixing that portion to 6 cycles
+         * and only counting post-dispatch latency matches the stats from
+         * PBTB and VNS more closely */
+        statistics::Scalar vanillaBranchPenaltyCyclesFromDispatch;
     } iewStats;
 };
 

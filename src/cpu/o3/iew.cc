@@ -188,7 +188,21 @@ IEW::IEWStats::IEWStats(CPU *cpu)
              "Insts written-back per cycle"),
     ADD_STAT(wbFanout, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Count>::get(),
-             "Average fanout of values written-back")
+             "Average fanout of values written-back"),
+
+    // ======== JV PBTB ============
+    ADD_STAT(vanillaBranchPenaltyCyclesFromFetch,
+             statistics::units::Count::get(),
+             "Total of number of cycles latency between fetch and execute "
+             "across all mispredicted branches "
+             "(e.g. total branch penalty in cycles)"),
+    ADD_STAT(vanillaBranchPenaltyCyclesFromDispatch,
+             statistics::units::Count::get(),
+             "Total of number of cycles latency between dispatch and execute "
+             "across all mispredicted branches. This ignores time a branch "
+             "spend stalled in the frontend, so fixing that to 6 cycles "
+             "and only counting post-dispatch latency matches the stats from "
+             "PBTB and VNS more closely")
 {
     instsToCommit
         .init(cpu->numThreads)
@@ -1526,9 +1540,9 @@ IEW::updateExeInstStats(const DynInstPtr& inst)
     cpu->executeStats[tid]->numInsts++;
 
 #if TRACING_ON
-    if (debug::O3PipeView) {
+    //if (debug::O3PipeView) { // JV PBTB: set these regardless
         inst->completeTick = curTick() - inst->fetchTick;
-    }
+    //}
 #endif
 
     //
@@ -1547,6 +1561,29 @@ IEW::updateExeInstStats(const DynInstPtr& inst)
         if (inst->isLoad()) {
             cpu->executeStats[tid]->numLoadInsts++;
         }
+    }
+
+    // JV PBTB
+    if (inst->isControl() && inst->mispredicted()) {
+        int ticksFetch = curTick() - inst->fetchTick;
+        // dispatchTick is an offset from fetch already!
+        int ticksDisp  = ticksFetch - inst->dispatchTick;
+
+        // Rounds up
+        int cyclesFetch = cpu->ticksToCycles(ticksFetch);
+        int cyclesDisp  = cpu->ticksToCycles(ticksDisp);
+
+        //DEBUG: remove this later
+        DPRINTF(IEW, "PBTB-Vanilla: branch mispredicted, %d cycles after"
+            " its fetch, %d cycles after its dispatch (%d / %d ticks)\n",
+            cyclesFetch, cyclesDisp, ticksFetch, ticksDisp);
+
+        iewStats.vanillaBranchPenaltyCyclesFromFetch += cyclesFetch;
+        iewStats.vanillaBranchPenaltyCyclesFromDispatch += cyclesDisp;
+
+        // iewStats.branchMispredicts should record 1:1 with this one,
+        // so we should be able to calculate ratios
+        // of avg latency per branch just fine
     }
 }
 

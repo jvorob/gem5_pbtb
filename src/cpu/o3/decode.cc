@@ -196,12 +196,6 @@ Decode::DecodeStats::DecodeStats(CPU *cpu)
     controlMispred.prereq(controlMispred);
     decodedInsts.prereq(decodedInsts);
     squashedInsts.prereq(squashedInsts);
-    /* ============ JV: PBTB Stats ========== */
-    //pbtbFinalizedBmovs.prereq(pbtbFinalizedBmovs);
-    //pbtbFinalizedPbs.prereq(pbtbFinalizedPbs);
-    //pbtbSquashes.prereq(pbtbSquashes);
-    //pbtbBlockedCycles.prereq(pbtbBlockedCycles);
-    //pbtbBlockedExhaustCycles.prereq(pbtbBlockedExhaustCycles);
 }
 
 void
@@ -830,11 +824,6 @@ Decode::decodeInsts(ThreadID tid)
         // see if branches were predicted correctly.
         toRename->insts[toRenameIndex] = inst;
 
-
-        // ==== TODO JV PBTB: count this as decoded
-        // ( Note: we know it's not squashed at this point)
-        cpu->pbtb.tracker.recordDecodeInst(tid, inst);
-
         ++(toRename->size);
         ++toRenameIndex;
         ++stats.decodedInsts;
@@ -846,9 +835,124 @@ Decode::decodeInsts(ThreadID tid)
         }
 #endif
 
+        // ==================== HANDLE PBTB FINALIZE ===================
+        // Note: all insts get handled here, since even non-pbs can mispredict
+        //       as pbs.
+        //
+
+        // All stats related to finalized insts, mispredicts, pbs are handled
+        // in here. This also updates the branch target
+        // so that squashing propagates it correctly to fetch
+
+        // Note: we know by know that it's not squashed, and that
+        //       it's ready to finalize
+        bool mispredicted = resolvePBTBAndCheckMispredict(tid, inst);
+        if (mispredicted) {
+            //== WE HANDLE THIS IN  resolvePBTBAndCheckMispredict
+
+            // squash overwrites fetch-pbtb to correct state (from finalize),
+            // squashes all incorrectly fetched insts,
+            // and updates fetch's branch predicotr
+            squash(inst, inst->threadNumber);
+
+            break;
+        }
+
+
+        // === OLD, Normal-branch code:
+
+        // TODO JV TEMP: DON'T CHECK BRANCHES, LET PBTB DRIVE IT
+        // // Ensure that if it was predicted as a branch, it really is a
+        // // branch.
+        // if (inst->readPredTaken() && !inst->isControl()) {
+        //     panic("Instruction predicted as a branch!");
+
+        //     ++stats.controlMispred;
+
+        //     // Might want to set some sort of boolean and just do
+        //     // a check at the end
+        //     squash(inst, inst->threadNumber);
+
+        //     break;
+        // }
+
+        // // OLD JV DEBUG INFO
+        // if (inst->readPredTaken()) {
+        //     DPRINTF(Decode,
+        //             "[tid:%i] [sn:%llu] "
+        //             "JV: PBTB predicted a branch to: %s\n",
+        //             //(op target: %s\n)",
+        //             tid, inst->seqNum, inst->readPredTarg());
+        //             //, *(inst->branchTarget()));
+        // }
+
+        //TODO JV TEMP: Don't check branches! Default to predicted target??
+        // // Go ahead and compute any PC-relative branches.
+        // // This includes direct unconditional control and
+        // // direct conditional control that is predicted taken.
+        // if (inst->isDirectCtrl() &&
+        //    (inst->isUncondCtrl() || inst->readPredTaken()))
+        // {
+        //     ++stats.branchResolved;
+
+        //     std::unique_ptr<PCStateBase> target = inst->branchTarget();
+        //     if (*target != inst->readPredTarg()) {
+        //         ++stats.branchMispred;
+
+        //         // Might want to set some sort of boolean and just do
+        //         // a check at the end
+        //         squash(inst, inst->threadNumber);
+
+        //         DPRINTF(Decode,
+        //                 "[tid:%i] [sn:%llu] "
+        //                 "Updating predictions: Wrong predicted target: %s \
+        //                 PredPC: %s\n",
+        //                 tid, inst->seqNum, inst->readPredTarg(), *target);
+        //         //The micro pc after an instruction level branch should be 0
+        //         inst->setPredTarg(*target);
+        //         break;
+        //     }
+        // }
+    }
+
+    // If we didn't process all instructions, then we will need to block
+    // and put all those instructions into the skid buffer.
+    if (!insts_to_decode.empty()) {
+        block(tid);
+    }
+
+    // Record that decode has written to the time buffer for activity
+    // tracking.
+    if (toRenameIndex) {
+        wroteToTimeBuffer = true;
+    }
+}
+
+
+// ##### TEMP: PREPPING FOR MOVE TO IEW
+/**
+ * NOTE: actually all insts need to go through this, since they might have been
+ * mispredicted as pbs
+ *
+ * Given a (possibly-pb) inst that's ready to finalize, determine whether it
+ * predicted correctly, then update predictions, stats, logging.
+ * Returns true if it mispredicted and needs to squash
+ */
+bool Decode::resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst) {
+
+        // Stalling needs to happen
+        assert(!cpu->pbtb.tracker.instNeedsToStall(tid, inst));
+
+        // Original code had this after the squash checks,
+        // if we want to make this handle squashed insts that will
+        // take some thinking to make sure it doesn't break anything
+        assert(!inst->isSquashed());
 
         // PBTB: update bmov stats (we'll get pbtbFinalizedPbs down below)
         if (inst->isBmov()){ ++stats.pbtbFinalizedBmovs; }
+
+        // ==== Count all insts as decoded for the dependency tracker?
+        cpu->pbtb.tracker.recordDecodeInst(tid, inst);
 
         // ===== PBTB: requery the finalize pbtb
 
@@ -1092,83 +1196,21 @@ Decode::decodeInsts(ThreadID tid)
             inst->setPredTarg(*d_targPC);
             inst->setPredTaken(d_taken);
 
-            // squash overwrites fetch-pbtb to correct state (from finalize),
-            // squashes all incorrectly fetched insts,
-            // and updates fetch's branch predicotr
-            squash(inst, inst->threadNumber);
 
-            break;
+            // === JV: WE MISPREDICTED!
+            // squash(inst, inst->threadNumber);
+            // caller needs to squash to::
+            // - overwrite fetch-pbtb to correct state (from finalize),
+            // - squash all incorrectly fetched insts,
+            // - updates fetch's branch predicotr
+            return true;
+
+
+            //break;
         }
 
-        // =============== DONE WITH PBTB FINALIZE!
-
-        // === OLD, Normal-branch code:
-
-        // TODO JV TEMP: DON'T CHECK BRANCHES, LET PBTB DRIVE IT
-        // // Ensure that if it was predicted as a branch, it really is a
-        // // branch.
-        // if (inst->readPredTaken() && !inst->isControl()) {
-        //     panic("Instruction predicted as a branch!");
-
-        //     ++stats.controlMispred;
-
-        //     // Might want to set some sort of boolean and just do
-        //     // a check at the end
-        //     squash(inst, inst->threadNumber);
-
-        //     break;
-        // }
-
-        // // OLD JV DEBUG INFO
-        // if (inst->readPredTaken()) {
-        //     DPRINTF(Decode,
-        //             "[tid:%i] [sn:%llu] "
-        //             "JV: PBTB predicted a branch to: %s\n",
-        //             //(op target: %s\n)",
-        //             tid, inst->seqNum, inst->readPredTarg());
-        //             //, *(inst->branchTarget()));
-        // }
-
-        //TODO JV TEMP: Don't check branches! Default to predicted target??
-        // // Go ahead and compute any PC-relative branches.
-        // // This includes direct unconditional control and
-        // // direct conditional control that is predicted taken.
-        // if (inst->isDirectCtrl() &&
-        //    (inst->isUncondCtrl() || inst->readPredTaken()))
-        // {
-        //     ++stats.branchResolved;
-
-        //     std::unique_ptr<PCStateBase> target = inst->branchTarget();
-        //     if (*target != inst->readPredTarg()) {
-        //         ++stats.branchMispred;
-
-        //         // Might want to set some sort of boolean and just do
-        //         // a check at the end
-        //         squash(inst, inst->threadNumber);
-
-        //         DPRINTF(Decode,
-        //                 "[tid:%i] [sn:%llu] "
-        //                 "Updating predictions: Wrong predicted target: %s \
-        //                 PredPC: %s\n",
-        //                 tid, inst->seqNum, inst->readPredTarg(), *target);
-        //         //The micro pc after an instruction level branch should be 0
-        //         inst->setPredTarg(*target);
-        //         break;
-        //     }
-        // }
-    }
-
-    // If we didn't process all instructions, then we will need to block
-    // and put all those instructions into the skid buffer.
-    if (!insts_to_decode.empty()) {
-        block(tid);
-    }
-
-    // Record that decode has written to the time buffer for activity
-    // tracking.
-    if (toRenameIndex) {
-        wroteToTimeBuffer = true;
-    }
+        // All good!
+        return false;
 }
 
 } // namespace o3

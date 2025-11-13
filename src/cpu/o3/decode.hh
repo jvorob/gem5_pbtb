@@ -302,6 +302,17 @@ class Decode
     //   ahead have executed
     bool isPBReadyToFinalize(DynInstPtr inst) const;
 
+    // ##### TEMP: PREPPING FOR MOVE TO IEW
+    /**
+     * NOTE: actually all insts need to go through this, since they might
+     * have been mispredicted as pbs
+     *
+     * Given a (possibly-pb) inst that's ready to finalize, determine whether
+     * it predicted correctly, then update predictions, stats, logging.
+     * Returns true if it mispredicted and needs to squash
+     */
+    bool resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst);
+
     //state (per-breg):
     InstSeqNum lastDecodedBmov[PBTB::NUM_REGS];
     InstSeqNum lastExecBmovFromIEW[PBTB::NUM_REGS];

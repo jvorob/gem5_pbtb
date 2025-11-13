@@ -189,7 +189,46 @@ IEW::IEWStats::IEWStats(CPU *cpu)
              "Insts written-back per cycle"),
     ADD_STAT(wbFanout, statistics::units::Rate<
                 statistics::units::Count, statistics::units::Count>::get(),
-             "Average fanout of values written-back")
+             "Average fanout of values written-back"),
+
+    /* ============ JV: PBTB Stats ========== */
+    ADD_STAT(pbtbFinalizedBmovs, statistics::units::Count::get(),
+            "Number of bmov insts that pass the finalize point"),
+    ADD_STAT(pbtbFinalizedPbs, statistics::units::Count::get(),
+            "Number of pb insts that pass the finalize point"),
+    ADD_STAT(pbtbFinalizedPbsThatBlocked, statistics::units::Count::get(),
+            "Number of finalized pbs that had to stall at least a cycle "
+            "for in-flight bmovs"),
+    ADD_STAT(pbtbSquashes, statistics::units::Count::get(),
+            "Number of pbtb squashes (due to a pb 'mispredict' at fetch)"),
+    ADD_STAT(pbtbBlockedCycles, statistics::units::Count::get(),
+            "Number of cycles spent blocked on a pb waiting for a bmov"),
+    ADD_STAT(pbtbFinalizedImaginedPbs, statistics::units::Count::get(),
+            "Number of finalized non-pb insts that had predicted as pbs "
+            "(FinalizedPbs+ImaginedPbs should sum to the 6 FinalStates)"),
+
+    // =============== PBTB: Finalize Outcomes: =============
+    ADD_STAT(pbtbFinalState_ReadyCorr, statistics::units::Count::get(),
+            "Number of pbs that had fetched with up-to-date pbtb info, "
+            "and therefore came out correct in finalize"),
+    ADD_STAT(pbtbFinalState_ReadyMisp, statistics::units::Count::get(),
+            "Number of pbs that fetched with up-to-date pbtb info, but mis"
+            "predicted (SHOULD BE 0? Only happen when fetch-pbtb desyncs)"),
+    ADD_STAT(pbtbFinalState_ExhaustedCorr, statistics::units::Count::get(),
+            "Number of pbs that were fetched as exhausted, but outcome was "
+            "predicted correctly"),
+    ADD_STAT(pbtbFinalState_ExhaustedMisp, statistics::units::Count::get(),
+            "Number of pbs that were fetched as exhausted, but the branch "
+            "predictor mispredicted"),
+    ADD_STAT(pbtbFinalState_WrongVersionCorr,
+            statistics::units::Count::get(),
+            "Number of pbs that fetched with an outdated pbtb entry, "
+            "but that coincidentally had the right outcome. (SHOULD BE "
+            "CLOSE TO 0? Almost always lead to desync on subsequent pbs?)"),
+    ADD_STAT(pbtbFinalState_WrongVersionMisp,
+            statistics::units::Count::get(),
+            "Number of pbs that fetched with an outdated pbtb entry, "
+            "and were squashed as a result.")
 {
     instsToCommit
         .init(cpu->numThreads)
@@ -1687,6 +1726,13 @@ IEW::checkMisprediction(const DynInstPtr& inst)
         }
     }
 }
+
+bool IEW::resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst) {
+    panic("Not implemented");
+    return true;
+}
+
+
 
 } // namespace o3
 } // namespace gem5

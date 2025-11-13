@@ -226,6 +226,14 @@ class IEW
     /** Check misprediction  */
     void checkMisprediction(const DynInstPtr &inst);
 
+
+    //========== JV PBTB
+    /** Given a pb that's ready to finalize, determine whether it predicted
+     * correctly, updated predictions, stats, logging.
+     * Returns true if it mispredicted
+     */
+    bool resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst);
+
     // hardware transactional memory
     // For debugging purposes, it is useful to keep track of the most recent
     // htmUid that has been committed (architecturally, not transactionally)
@@ -477,6 +485,59 @@ class IEW
         statistics::Formula wbRate;
         /** Average number of woken instructions per writeback. */
         statistics::Formula wbFanout;
+
+        /* ============ JV: PBTB Stats ========== */
+        // Number of bmov insts that pass the finalize point
+        statistics::Scalar pbtbFinalizedBmovs;
+        // Number of pb insts that pass the finalize point
+        statistics::Scalar pbtbFinalizedPbs;
+        // Number of pbtb squashes (due to a pb "mispredict" at fetch)
+        statistics::Scalar pbtbFinalizedPbsThatBlocked;
+        // Number of finalized pbs that had to stall at least a cycle
+        // for in-flight bmovs
+        statistics::Scalar pbtbSquashes;
+        // Number of cycles spent blocked on a pb waiting for a bmov (total)
+        statistics::Scalar pbtbBlockedCycles;
+        // Number of finalized non-pb insts that had predicted as pbs
+        // (finalizedPbs+imaginedPbs should sum to the 6 finalStates)
+        statistics::Scalar pbtbFinalizedImaginedPbs;
+
+        // =============== PBTB: Finalize Outcomes: =============
+        // Each finalized pb falls into one of the 6 FinalState stats,
+        // so they should sum together to pbtbFinalizedPbs
+        // There are 3 options for how it came about in fetch,
+        // either it was ready (i.e. up to date info)
+        // or it was exhausted (correct version, type, source, target, but
+        // out of predictions)
+        // or it was on the wrong version (i.e. missing non-bit bmovs)
+        //
+        // Additionally: in each of these 3 cases, it's possible for the
+        // pb to have mispredicted or predicted correctly,
+        // which implies slightly different things in each case
+
+        // Number of pbs that had fetched with up-to-date pbtb info,
+        // and therefore came out correct in finalize
+        statistics::Scalar pbtbFinalState_ReadyCorr;
+
+        // Number of pbs that fetched with up-to-date pbtb info, but
+        // mispredicted (SHOULD BE 0? Only happen when fetch-pbtb desyncs)
+        statistics::Scalar pbtbFinalState_ReadyMisp;
+
+        // Number of pbs that were fetched as exhausted, but outcome was
+        // predicted correctly
+        statistics::Scalar pbtbFinalState_ExhaustedCorr;
+        // Number of pbs that were fetched as exhausted, but the branch
+        // predictor mispredicted
+        statistics::Scalar pbtbFinalState_ExhaustedMisp;
+
+        // Number of pbs that fetched with an outdated pbtb entry,
+        // but that coincidentally had the right outcome. (SHOULD BE CLOSE
+        // TO 0? Almost always lead to desync on subsequent pbs?)
+        statistics::Scalar pbtbFinalState_WrongVersionCorr;
+
+        // Number of pbs that fetched with an outdated pbtb entry,
+        // and were squashed as a result.
+        statistics::Scalar pbtbFinalState_WrongVersionMisp;
     } iewStats;
 };
 

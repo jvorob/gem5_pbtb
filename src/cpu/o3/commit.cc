@@ -782,11 +782,15 @@ Commit::commit()
         // Squashed sequence number must be older than youngest valid
         // instruction in the ROB. This prevents squashes from younger
         // instructions overriding squashes from older instructions.
-        if (fromIEW->squash[tid] &&
+        bool anyIEWSquash = fromIEW->squash[tid] || fromIEW->weakSquash[tid];
+        bool squashWasWeak = fromIEW->weakSquash[tid] && !fromIEW->squash[tid];
+
+        if (anyIEWSquash &&
             commitStatus[tid] != TrapPending &&
             fromIEW->squashedSeqNum[tid] <= youngestSeqNum[tid]) {
 
             if (fromIEW->mispredictInst[tid]) {
+                assert(squashWasWeak); // JV: should only happen from pbtb?
                 DPRINTF(Commit,
                     "[tid:%i] Squashing due to branch mispred "
                     "PC:%#x [sn:%llu]\n",
@@ -819,28 +823,38 @@ Commit::commit()
             rob->squash(squashed_inst, tid);
             changedROBNumEntries[tid] = true;
 
-            toIEW->commitInfo[tid].doneSeqNum = squashed_inst;
 
-            toIEW->commitInfo[tid].squash = true;
+            // ==== JV PBTB: NOW, the res of this is about notifying previous
+            // stages, which we DON'T WANT TO DO for mispredicts (i.e. pbtb)
+            if (!squashWasWeak) {
+                toIEW->commitInfo[tid].doneSeqNum = squashed_inst;
 
-            // Send back the rob squashing signal so other stages know that
-            // the ROB is in the process of squashing.
-            toIEW->commitInfo[tid].robSquashing = true;
+                toIEW->commitInfo[tid].squash = true;
 
-            toIEW->commitInfo[tid].mispredictInst =
-                fromIEW->mispredictInst[tid];
-            toIEW->commitInfo[tid].branchTaken =
-                fromIEW->branchTaken[tid];
-            toIEW->commitInfo[tid].squashInst =
-                                    rob->findInst(tid, squashed_inst);
-            if (toIEW->commitInfo[tid].mispredictInst) {
-                if (toIEW->commitInfo[tid].mispredictInst->isUncondCtrl()) {
-                     toIEW->commitInfo[tid].branchTaken = true;
+                // Send back the rob squashing signal so other stages know that
+                // the ROB is in the process of squashing.
+                toIEW->commitInfo[tid].robSquashing = true;
+
+                toIEW->commitInfo[tid].mispredictInst =
+                    fromIEW->mispredictInst[tid];
+                toIEW->commitInfo[tid].branchTaken =
+                    fromIEW->branchTaken[tid];
+                toIEW->commitInfo[tid].squashInst =
+                                        rob->findInst(tid, squashed_inst);
+                if (toIEW->commitInfo[tid].mispredictInst) {
+                    if (toIEW->commitInfo[tid].mispredictInst->isUncondCtrl())
+                        { toIEW->commitInfo[tid].branchTaken = true; }
+                    //++stats.branchMispredicts;
                 }
-                ++stats.branchMispredicts;
+
+                set(toIEW->commitInfo[tid].pc, fromIEW->pc[tid]);
             }
 
-            set(toIEW->commitInfo[tid].pc, fromIEW->pc[tid]);
+            // JV: Moving this stat out here since this shouldn't be gated
+            // by weak squash
+            if (fromIEW->mispredictInst[tid]) {
+                    ++stats.branchMispredicts;
+            }
         }
 
         if (commitStatus[tid] == ROBSquashing) {

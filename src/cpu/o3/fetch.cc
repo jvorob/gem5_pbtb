@@ -852,9 +852,14 @@ Fetch::squashFromIEWDispatch(const PCStateBase &new_pc,
 
     doSquash(new_pc, seq_num, squashInst, tid);
 
-    // Tell the CPU to remove any instructions that are in flight between
+    // JV PBTB: this made sense when squash came from decode, but now
+    // I think we just clear up to the ROB, and let commit handle the rest
+    // as it rob-squashes
+    cpu->removeInstsNotInROB(tid);
+
+    // OLD: Tell the CPU to remove any instructions that are in flight between
     // fetch and decode.
-    cpu->removeInstsUntil(seq_num, tid);
+    //cpu->removeInstsUntil(seq_num, tid);
 }
 
 bool
@@ -1058,8 +1063,14 @@ Fetch::checkSignalsAndUpdate(ThreadID tid)
         // branch predictor with that instruction, otherwise just kill the
         // invalid state we generated in after sequence number
 
+
         // JV PBTB: now we always do it?
         if (fromCommit->commitInfo[tid].mispredictInst) {
+            // NOTE: this worked before when PBTB was sending mispredicts
+            // back by first sending them forward to commit, but
+            // now this should never happen
+            panic("FETCH: we're no longer handling mispredicts via commit");
+
             // TODO: TEMP, JV PBTB
             auto di = &fromCommit->commitInfo[tid];
             assert(di->mispredictInst->isPb());

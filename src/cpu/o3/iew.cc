@@ -509,14 +509,37 @@ IEW::squashDueToPBTB(const DynInstPtr& inst, ThreadID tid)
             tid, inst->seqNum,
             inst->readPredTarg().instAddr());
 
+    // ================ JV PBTB:  NOTIFY COMMIT OF SQUASH
+    // Original squash behavior on a branch mispredict is to tell commit
+    // about the squash, and it will echo it back to us in 2 cycles.
+
+    // NEW BEHAVIOR: We still need to tell commit about the squash
+    //   to clear out the ROB (instructions unfortunately get put in ROB
+    //   as soon as they leave rename), but we want it to not echo that
+    //   squash to anyone
+
+    // Instead: we tell commit about the squash, but make it a weak squash.
+    // Weak squash is overridden by any actual squash in the same cycle.
+    // We also change the logic for the frontend stages so they
+    // handle commit squashes first, and weak squashes only if no commit squash
+
     if (!toCommit->squash[tid] ||
-            inst->seqNum < toCommit->squashedSeqNum[tid]) {
-        toCommit->squash[tid] = true;
+        inst->seqNum < toCommit->squashedSeqNum[tid]) {
+
+        // NOTE: Originally, this allowed us to override a squash from
+        // a younger branch in the same cycle, but with PBTB that
+        // should never happen (PBTB squashes happen in dispatch and in-order)
+        // (any other squashes should be happening in exec, and be older insts)
+        if (toCommit->squash[tid]) {
+            assert(!(inst->seqNum < toCommit->squashedSeqNum[tid]));
+        }
+
+        //toCommit->squash[tid] = true;
+        toCommit->weakSquash[tid] = true; // JV: ONLY WEAKLY SQUASH
         toCommit->squashedSeqNum[tid] = inst->seqNum;
         toCommit->branchTaken[tid] = inst->readPredTaken()
                                   || inst->isUncondCtrl();
-        // OLD:
-        //toCommit->branchTaken[tid] = inst->pcState().branching();
+        // OLD:  toCommit->branchTaken[tid] = inst->pcState().branching();
 
         // TODO JV PBTB: originally this used advancePC to get the target
         // from the branch instructions,
@@ -534,31 +557,35 @@ IEW::squashDueToPBTB(const DynInstPtr& inst, ThreadID tid)
         wroteToTimeBuffer = true;
     }
 
-    return; // JV TEMP:
+    // ================ JV PBTB: NOTIFY FRONTEND
+    // Fetch will use this to update predictor/refetch
+    // Fetch, Decode, Rename should squash
 
     // TODO: Send back mispredict information.
-    //toFetch->iewInfo[tid].branchMispredict = true;
-    //toFetch->iewInfo[tid].predIncorrect = true;
-    //toFetch->iewInfo[tid].mispredictInst = inst;
-    //toFetch->iewInfo[tid].squash = true;
-    //toFetch->iewInfo[tid].doneSeqNum = inst->seqNum;
+    toFetch->iewInfo[tid].branchMispredict = true;
+    toFetch->iewInfo[tid].predIncorrect = true;
+    toFetch->iewInfo[tid].mispredictInst = inst;
+    toFetch->iewInfo[tid].squash = true;
+    toFetch->iewInfo[tid].doneSeqNum = inst->seqNum;
 
-    //// TODO JV PBTB: originally this used the branchTarget from the branch
-    //// However, now the pbs dont actually have a target
-    //// Instead, we update the inst->predTarg
-    //set(toFetch->iewInfo[tid].nextPC, inst->readPredTarg());
-    ////OLD: set(toFetch->iewInfo[tid].nextPC, *inst->branchTarget());
+    // TODO JV PBTB: originally this used the branchTarget from the branch
+    // However, now the pbs dont actually have a target
+    // Instead, we update the inst->predTarg
+    set(toFetch->iewInfo[tid].nextPC, inst->readPredTarg());
+    //OLD: set(toFetch->iewInfo[tid].nextPC, *inst->branchTarget());
 
-    //// ALSO on squash:
-    //toFetch->iewInfo[tid].branchTaken = inst->readPredTaken()
-    //                                 || inst->isUncondCtrl();
-    //toFetch->iewInfo[tid].squashInst = inst;
+    // ALSO on squash:
+    toFetch->iewInfo[tid].branchTaken = inst->readPredTaken()
+                                     || inst->isUncondCtrl();
+    toFetch->iewInfo[tid].squashInst = inst;
 
-    //// PBTB: Reset the fetch stage's PBTB to the finalize one
-    //cpu->pbtb.squashFinalizeToFetch();
+    // PBTB: Reset the fetch stage's PBTB to the finalize one
+    cpu->pbtb.squashFinalizeToFetch();
 
     wroteToTimeBuffer = true;
-    // ========= Standard squash behavior? (TODO)
+
+
+    // =========  SQUASH OUR OWN INSTS:
 
     //TODO: how do we instruct preceding stages to clear themselves?
 
@@ -572,6 +599,11 @@ IEW::squashDueToPBTB(const DynInstPtr& inst, ThreadID tid)
             "[sn:%llu] [tid:%i]\n",
             fromCommit->commitInfo[tid].doneSeqNum, tid);
 
+    // == NOTE: I'm setting insts to squashed here instead of waiting
+    // for ROB to do it, which I THINK is less correct? but should
+    // make sure they don't go off and start doing stuff while we're
+    // waiting for commit to get back to us?
+    // Will see if this comes back to bite me
     while (!skidBuffer[tid].empty()) {
         if (skidBuffer[tid].front()->isLoad()) {
             toRename->iewInfo[tid].dispatchedToLQ++;
@@ -588,7 +620,7 @@ IEW::squashDueToPBTB(const DynInstPtr& inst, ThreadID tid)
         wroteToTimeBuffer = true;
     }
 
-    // Clear other incoming insts
+    // Clear out self->insts[tid]
     emptyRenameInsts(tid);
 
     // === JV PBTB AAAA This is cargo cult programming but I just want it
@@ -603,13 +635,11 @@ IEW::squashDueToPBTB(const DynInstPtr& inst, ThreadID tid)
     // Set status to squashing.
     dispatchStatus[tid] = Squashing;
 
-    // === Clear out own insts
-
-
-    // JV: Squash instructions up until this one (copied from Decode?)
-    // UHHHH Wait I think this might delete insts across all stages?
-    // but idk this is it was implemented and I don't want to dig into it
-    cpu->removeInstsUntil(inst->seqNum, tid);
+    // === NOTE:
+    // For the frontend squash, Fetch will call cpu->removeInstsNotInROB
+    // For the squashed instructions in the dispatch queue in IEW, commit will
+    // squash them as the ROB cycles through, and will then do a corresponing
+    // cpu>removeInsts[something] on them
 }
 
 
@@ -992,6 +1022,7 @@ IEW::emptyRenameInsts(ThreadID tid)
 
         toRename->iewInfo[tid].dispatched++;
 
+        insts[tid].front()->setSquashed();
         insts[tid].pop();
     }
 }

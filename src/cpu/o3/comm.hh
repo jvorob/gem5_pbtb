@@ -96,6 +96,9 @@ struct IEWStruct
     InstSeqNum squashedSeqNum[MaxThreads];
     std::unique_ptr<PCStateBase> pc[MaxThreads];
 
+    bool weakSquash[MaxThreads]; // JV PBTB: half-baked attempt.
+    // weakSquash && !squash means info is valid and commit needs to update
+    // info accordingly, but not notify the other stages about it
     bool squash[MaxThreads];
     bool branchMispredict[MaxThreads];
     bool branchTaken[MaxThreads];

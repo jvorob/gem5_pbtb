@@ -114,6 +114,8 @@ struct TimeStruct
 {
     struct DecodeComm
     {
+        // JV PBTB: these should all be obsolete now?
+        // I'm switching Fetch to expect this info from IEW now
         std::unique_ptr<PCStateBase> nextPC;
         DynInstPtr mispredictInst;
         DynInstPtr squashInst;
@@ -146,10 +148,26 @@ struct TimeStruct
         unsigned ldstqCount;
 
         // JV PBTB: send back which bmovs executed?
+        // SHOULD BE OBSOLETE NOW
         // NOTE: should only every have one bmov executing per breg,
         // since bmovs within a breg are serialized?
         // Alternatively, could send back a count of executed bmovs per breg?
         InstSeqNum lastExecBmovSeqNum[PBTB::NUM_REGS];
+
+        // === JV PBTB: also pass back pbtb-misp info
+        // NOTE: these conflict in name with IEWStruct, but those are
+        // for passing to commit for branch mispredicts which no longer happen
+        // with pbtb, whereas these are to resteer the fetch stage and trigger
+        // squashes in the frontend on PBTB squash
+        std::unique_ptr<PCStateBase> nextPC;
+        DynInstPtr squashInst;
+        DynInstPtr mispredictInst;
+        InstSeqNum doneSeqNum;
+        bool squash;
+        bool predIncorrect;
+        bool branchMispredict;
+        bool branchTaken;
+        // ============
 
         unsigned dispatched;
         bool usedIQ;

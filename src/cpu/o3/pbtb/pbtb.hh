@@ -98,6 +98,9 @@ class BmovTracker
 
     // Note: this doesn't count squashes the Decode itself generates,
     // only squashed from ahead of it, e.g. from IEW or commit
+    // (we don't need to record its own squashes since they only affect
+    //  instructions that havent been finalized, and thus haven't
+    //  been recorded in the bmov tracker yet)
     void recordSquashFromAhead (ThreadID tid, InstSeqNum squashSeq);
 
     // ============ Query Functions
@@ -282,7 +285,7 @@ class PBTB
 
     //Note: if not taken, will instead
     //advance pcAddr and return in targetAddr_out
-    PBTBResultType queryFromDecode(
+    PBTBResultType queryFromDispatch(
             const StaticInstPtr inst, PCStateBase &pc_inout, InstSeqNum seqnum,
             int *p_breg_out, uint64_t *p_version_out);
 

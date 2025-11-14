@@ -1300,6 +1300,21 @@ Rename::checkSignalsAndUpdate(ThreadID tid)
 
         return true;
     }
+    // ==== JV PBTB:
+    // Check squash signals from IEW
+    if (fromIEW->iewInfo[tid].squash) {
+        DPRINTF(Rename, "[tid:%i] Squashing instructions due to squash "
+                "from IEW-dispatch.\n",tid);
+
+        if (renameStatus[tid] != Squashing) {
+            DPRINTF(Rename, "Squashing from IEW with PC = %s\n",
+                *fromIEW->iewInfo[tid].nextPC);
+            // Squash unless we're already squashing from commit
+            squash(fromIEW->iewInfo[tid].doneSeqNum, tid);
+
+            return true;
+        }
+    }
 
     if (checkStall(tid)) {
         return block(tid);

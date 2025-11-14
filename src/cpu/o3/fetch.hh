@@ -312,7 +312,7 @@ class Fetch
      * remove any instructions between fetch and decode
      *  that should be sqaushed.
      */
-    void squashFromDecode(const PCStateBase &new_pc,
+    void squashFromIEWDispatch(const PCStateBase &new_pc,
                           const DynInstPtr squashInst,
                           const InstSeqNum seq_num, ThreadID tid);
 

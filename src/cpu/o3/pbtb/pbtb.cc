@@ -766,7 +766,7 @@ PBTB::PBTBResultType PBTB::queryFromFetch(
 
 // Note: pc_inout will be updated to the target of the pb. If you don't want
 // it clobbered, make sure you pass in a clone
-PBTB::PBTBResultType PBTB::queryFromDecode(
+PBTB::PBTBResultType PBTB::queryFromDispatch(
             const StaticInstPtr inst,  PCStateBase &pc_inout,
             InstSeqNum seqnum, int *p_breg_out, uint64_t *p_version_out) {
 
@@ -779,8 +779,8 @@ PBTB::PBTBResultType PBTB::queryFromDecode(
 
     bool taken = (res == PBTBResultType::PR_Taken);
 
-    // At decode time, we should never (?) query an exhausted breg
-    // since we will have stalled first: (see comment at call site in decode)
+    // At finalize time (dispatch), we should never(?) query an exhausted breg
+    // since we will have stalled first: (see comment at call site in disp)
     // However, this may need to change if we expand to allow that and
     // raise an exception, in which case we'll need to make sure we don't
     // consume an iteration (since decode pbtb should never go negative?)

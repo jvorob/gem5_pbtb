@@ -255,6 +255,16 @@ class IEW
      */
     void squashDueToMemOrder(const DynInstPtr &inst, ThreadID tid);
 
+    // ============= JV PBTB
+    /** Handle a PBTB Mispredict
+     * NOTE: this happens at dispatch, therefore is in the in-order portion?
+     * But we still need to send that back to preceding stages
+     *
+     * NOTE ALSO: this is pre-rob, so we shouldn't need to tell
+     * commit about it?
+     */
+    void squashDueToPBTB(const DynInstPtr &inst, ThreadID tid);
+
     /** Sets Dispatch to blocked, and signals back to other stages to block. */
     void block(ThreadID tid);
 

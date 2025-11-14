@@ -844,10 +844,11 @@ Fetch::doSquash(const PCStateBase &new_pc, const InstSeqNum seq_num,
 }
 
 void
-Fetch::squashFromDecode(const PCStateBase &new_pc, const DynInstPtr squashInst,
+Fetch::squashFromIEWDispatch(const PCStateBase &new_pc,
+        const DynInstPtr squashInst,
         const InstSeqNum seq_num, ThreadID tid)
 {
-    DPRINTF(Fetch, "[tid:%i] Squashing from decode.\n", tid);
+    DPRINTF(Fetch, "[tid:%i] Squashing from IEW dispatch.\n", tid);
 
     doSquash(new_pc, seq_num, squashInst, tid);
 
@@ -1052,14 +1053,35 @@ Fetch::checkSignalsAndUpdate(ThreadID tid)
                fromCommit->commitInfo[tid].doneSeqNum,
                fromCommit->commitInfo[tid].squashInst, tid);
 
+
         // If it was a branch mispredict on a control instruction, update the
         // branch predictor with that instruction, otherwise just kill the
         // invalid state we generated in after sequence number
-        if (fromCommit->commitInfo[tid].mispredictInst &&
-            fromCommit->commitInfo[tid].mispredictInst->isControl()) {
+
+        // JV PBTB: now we always do it?
+        if (fromCommit->commitInfo[tid].mispredictInst) {
+            // TODO: TEMP, JV PBTB
+            auto di = &fromCommit->commitInfo[tid];
+            assert(di->mispredictInst->isPb());
+            const char* taken_str = fromCommit->commitInfo[tid].branchTaken ?
+                "taken" : "not taken";
+            // pc instead of nextPC
+            DPRINTF(Fetch, "[tid:%i] PBTB Updating fetch-predictor, "
+                    "branch %s, target PC 0x%x\n",
+                    tid,
+                    taken_str, fromCommit->commitInfo[tid].pc->instAddr());
+
             branchPred->squash(fromCommit->commitInfo[tid].doneSeqNum,
-                    *fromCommit->commitInfo[tid].pc,
+                    *fromCommit->commitInfo[tid].pc, // pc instead of nextpc?
                     fromCommit->commitInfo[tid].branchTaken, tid);
+
+
+           // === OLD CODE:
+        //if (fromCommit->commitInfo[tid].mispredictInst &&
+           // fromCommit->commitInfo[tid].mispredictInst->isControl()) {
+           // branchPred->squash(fromCommit->commitInfo[tid].doneSeqNum,
+           //         *fromCommit->commitInfo[tid].pc,
+           //         fromCommit->commitInfo[tid].branchTaken, tid);
         } else {
             branchPred->squash(fromCommit->commitInfo[tid].doneSeqNum,
                               tid);
@@ -1072,40 +1094,43 @@ Fetch::checkSignalsAndUpdate(ThreadID tid)
         branchPred->update(fromCommit->commitInfo[tid].doneSeqNum, tid);
     }
 
+    // JV PBTB: this shouldn't happen now? PBTB has been moved to IEW dispatch
+    assert(!fromDecode->decodeInfo[tid].squash);
+
     // Check squash signals from decode.
-    if (fromDecode->decodeInfo[tid].squash) {
+    if (fromIEW->iewInfo[tid].squash) {
         DPRINTF(Fetch, "[tid:%i] Squashing instructions due to squash "
-                "from decode.\n",tid);
+                "from IEW-dispatch.\n",tid);
 
 
         // Update the branch predictor.
-        if (fromDecode->decodeInfo[tid].branchMispredict) {
+        if (fromIEW->iewInfo[tid].branchMispredict) {
             // TODO: TEMP, JV PBTB
-            auto di = &fromDecode->decodeInfo[tid];
+            auto di = &fromIEW->iewInfo[tid];
             assert(di->mispredictInst->isPb());
-            const char* taken_str = fromDecode->decodeInfo[tid].branchTaken ?
+            const char* taken_str = fromIEW->iewInfo[tid].branchTaken ?
                 "taken" : "not taken";
             DPRINTF(Fetch, "[tid:%i] PBTB Updating fetch-predictor, "
                     "branch %s, target PC 0x%x\n",
                     tid,
-                    taken_str, fromDecode->decodeInfo[tid].nextPC->instAddr());
+                    taken_str, fromIEW->iewInfo[tid].nextPC->instAddr());
 
-            branchPred->squash(fromDecode->decodeInfo[tid].doneSeqNum,
-                    *fromDecode->decodeInfo[tid].nextPC,
-                    fromDecode->decodeInfo[tid].branchTaken, tid);
+            branchPred->squash(fromIEW->iewInfo[tid].doneSeqNum,
+                    *fromIEW->iewInfo[tid].nextPC,
+                    fromIEW->iewInfo[tid].branchTaken, tid);
         } else {
-            branchPred->squash(fromDecode->decodeInfo[tid].doneSeqNum,
+            branchPred->squash(fromIEW->iewInfo[tid].doneSeqNum,
                               tid);
         }
 
         if (fetchStatus[tid] != Squashing) {
 
             DPRINTF(Fetch, "Squashing from decode with PC = %s\n",
-                *fromDecode->decodeInfo[tid].nextPC);
+                *fromIEW->iewInfo[tid].nextPC);
             // Squash unless we're already squashing
-            squashFromDecode(*fromDecode->decodeInfo[tid].nextPC,
-                             fromDecode->decodeInfo[tid].squashInst,
-                             fromDecode->decodeInfo[tid].doneSeqNum,
+            squashFromIEWDispatch(*fromIEW->iewInfo[tid].nextPC,
+                             fromIEW->iewInfo[tid].squashInst,
+                             fromIEW->iewInfo[tid].doneSeqNum,
                              tid);
 
             return true;

@@ -113,6 +113,9 @@ IEW::IEW(CPU *_cpu, const BaseO3CPUParams &params)
     updateLSQNextCycle = false;
 
     skidBufferMax = (renameToIEWDelay + 1) * params.renameWidth;
+
+    // JV PBTB
+    cpu->pbtb.tracker.reset();
 }
 
 std::string
@@ -288,6 +291,9 @@ IEW::startupStage()
     }
 
     cpu->activateStage(CPU::IEWIdx);
+
+    // JV PBTB
+    cpu->pbtb.tracker.reset();
 }
 
 void
@@ -421,6 +427,18 @@ IEW::squash(ThreadID tid)
 {
     DPRINTF(IEW, "[tid:%i] Squashing all instructions.\n", tid);
 
+    // ================ JV PBTB =======================
+    // everything with seq>squashNum is gone
+    InstSeqNum squashNum = fromCommit->commitInfo[tid].doneSeqNum;
+    //JV PBTB: record committed inst and/or sanity check to make sure
+    //         we haven't squashed in an illegal way
+    cpu->pbtb.tracker.recordSquashFromAhead(tid, squashNum);
+    cpu->pbtb.unwindSquash(squashNum); // roll back main pbtb
+
+    // once main pbtb is rewound, also update fetch pbtb?
+    cpu->pbtb.squashFinalizeToFetch();
+    // ================ END PBTB
+
     // Tell the IQ to start squashing.
     instQueue.squash(tid);
 
@@ -449,6 +467,8 @@ IEW::squash(ThreadID tid)
     }
 
     emptyRenameInsts(tid);
+
+
 }
 
 void
@@ -479,6 +499,120 @@ IEW::squashDueToBranch(const DynInstPtr& inst, ThreadID tid)
     }
 
 }
+
+void
+IEW::squashDueToPBTB(const DynInstPtr& inst, ThreadID tid)
+{
+    // Target should have been updated when we queried the PBTB?
+    DPRINTF(IEW, "[tid:%i] [sn:%llu] Squashing from pbtb mispredict at "
+            "dispatch (correct target: 0x%x).\n",
+            tid, inst->seqNum,
+            inst->readPredTarg().instAddr());
+
+    if (!toCommit->squash[tid] ||
+            inst->seqNum < toCommit->squashedSeqNum[tid]) {
+        toCommit->squash[tid] = true;
+        toCommit->squashedSeqNum[tid] = inst->seqNum;
+        toCommit->branchTaken[tid] = inst->readPredTaken()
+                                  || inst->isUncondCtrl();
+        // OLD:
+        //toCommit->branchTaken[tid] = inst->pcState().branching();
+
+        // TODO JV PBTB: originally this used advancePC to get the target
+        // from the branch instructions,
+        // However, now the pbs dont actually have a target
+        // Instead, finalizing a pb updates its inst->predTarg
+        set(toCommit->pc[tid], inst->readPredTarg());
+
+        // OLD:
+        //set(toCommit->pc[tid], inst->pcState());
+        //inst->staticInst->advancePC(*toCommit->pc[tid]);
+
+        toCommit->mispredictInst[tid] = inst;
+        toCommit->includeSquashInst[tid] = false;
+
+        wroteToTimeBuffer = true;
+    }
+
+    return; // JV TEMP:
+
+    // TODO: Send back mispredict information.
+    //toFetch->iewInfo[tid].branchMispredict = true;
+    //toFetch->iewInfo[tid].predIncorrect = true;
+    //toFetch->iewInfo[tid].mispredictInst = inst;
+    //toFetch->iewInfo[tid].squash = true;
+    //toFetch->iewInfo[tid].doneSeqNum = inst->seqNum;
+
+    //// TODO JV PBTB: originally this used the branchTarget from the branch
+    //// However, now the pbs dont actually have a target
+    //// Instead, we update the inst->predTarg
+    //set(toFetch->iewInfo[tid].nextPC, inst->readPredTarg());
+    ////OLD: set(toFetch->iewInfo[tid].nextPC, *inst->branchTarget());
+
+    //// ALSO on squash:
+    //toFetch->iewInfo[tid].branchTaken = inst->readPredTaken()
+    //                                 || inst->isUncondCtrl();
+    //toFetch->iewInfo[tid].squashInst = inst;
+
+    //// PBTB: Reset the fetch stage's PBTB to the finalize one
+    //cpu->pbtb.squashFinalizeToFetch();
+
+    wroteToTimeBuffer = true;
+    // ========= Standard squash behavior? (TODO)
+
+    //TODO: how do we instruct preceding stages to clear themselves?
+
+
+    // We DONT want to clear the inst-queue or ldst queue,
+    // those are after dispatch
+
+    // Clear the skid buffer in case it has any data in it.
+    DPRINTF(IEW,
+            "Removing skidbuffer instructions until "
+            "[sn:%llu] [tid:%i]\n",
+            fromCommit->commitInfo[tid].doneSeqNum, tid);
+
+    while (!skidBuffer[tid].empty()) {
+        if (skidBuffer[tid].front()->isLoad()) {
+            toRename->iewInfo[tid].dispatchedToLQ++;
+        }
+        if (skidBuffer[tid].front()->isStore() ||
+            skidBuffer[tid].front()->isAtomic()) {
+            toRename->iewInfo[tid].dispatchedToSQ++;
+        }
+
+        toRename->iewInfo[tid].dispatched++;
+
+        skidBuffer[tid].front()->setSquashed();
+        skidBuffer[tid].pop();
+        wroteToTimeBuffer = true;
+    }
+
+    // Clear other incoming insts
+    emptyRenameInsts(tid);
+
+    // === JV PBTB AAAA This is cargo cult programming but I just want it
+    // to work: let's do some of the stuff the decode does when manually
+    // squashing:
+
+    // Might have to tell rename to unblock.
+    if (dispatchStatus[tid] == Blocked ||
+        dispatchStatus[tid] == Unblocking) {
+        toRename->iewUnblock[tid] = 1;
+    }
+    // Set status to squashing.
+    dispatchStatus[tid] = Squashing;
+
+    // === Clear out own insts
+
+
+    // JV: Squash instructions up until this one (copied from Decode?)
+    // UHHHH Wait I think this might delete insts across all stages?
+    // but idk this is it was implemented and I don't want to dig into it
+    cpu->removeInstsUntil(inst->seqNum, tid);
+}
+
+
 
 void
 IEW::squashDueToMemOrder(const DynInstPtr& inst, ThreadID tid)
@@ -722,8 +856,30 @@ IEW::checkSignalsAndUpdate(ThreadID tid)
     // If status was Squashing
     //     check if squashing is not high.  Switch to running this cycle.
 
+
+
+    // =================== JV PBTB =======================
+    // DEBUG the from-commit signals
+    //DPRINTF(Decode, "[tid:%i] fromcommit DEBUGGING: "
+    //                "squash:%c doneSeqNum=%d\n",
+    //                tid, fromCommit->commitInfo[tid].squash ? 'T':'F',
+    //                    fromCommit->commitInfo[tid].doneSeqNum);
+
+    // If we committed this cycle then doneSeqNum will be > 0
+    if (fromCommit->commitInfo[tid].doneSeqNum != 0 &&
+        !fromCommit->commitInfo[tid].squash) {
+        cpu->pbtb.tracker.recordCommit(tid,
+                fromCommit->commitInfo[tid].doneSeqNum);
+    }
+
+    // =======================================================
+
     if (fromCommit->commitInfo[tid].squash) {
-        squash(tid);
+        // everything with seq>squashNum is gone
+        InstSeqNum squashNum = fromCommit->commitInfo[tid].doneSeqNum;
+        DPRINTF(IEW, "[tid:%i] Squashing instructions due to squash "
+                "from commit [sn:%lld] .\n", tid, squashNum);
+        squash(tid); //JV PBTB: updated to also unwind PBTB and tracker
 
         if (dispatchStatus[tid] == Blocked ||
             dispatchStatus[tid] == Unblocking) {
@@ -749,6 +905,37 @@ IEW::checkSignalsAndUpdate(ThreadID tid)
         dispatchStatus[tid] = Blocked;
         return;
     }
+
+    // ===== JV PBTB:
+    // if next inst is a placeholder branch,
+    // we have to stall until it's ready to finalize (all bmovs have executed)
+    bool reading_from_skid = (dispatchStatus[tid] == Blocked
+                           || dispatchStatus[tid] == Unblocking);
+    const std::queue<DynInstPtr>
+        &insts_to_dispatch = reading_from_skid? skidBuffer[tid] : insts[tid];
+
+    if (insts_to_dispatch.size() > 0) {
+        DynInstPtr inst = insts_to_dispatch.front();
+
+        // WARNING: This check is duplicated in dispatchInsts()
+        // MAKE SURE BOTH HAVE THE SAME LOGIC
+
+        if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
+            DPRINTF(IEW,"[tid:%i] Stalling for pb [sn:%d] finalize "
+                           "(in checkSignalsAndUpdate)\n",
+                    tid, inst->seqNum);
+            ++iewStats.pbtbBlockedCycles;
+            inst->setPredBTBDidBlock(true); // we may set this multiple times,
+            // (also in decodeInsts), but we'll be sure we marked them all
+
+            block(tid);
+            dispatchStatus[tid] = Blocked;
+            return;
+        }
+    }
+    // ========== END PBTB
+
+
 
     if (dispatchStatus[tid] == Blocked) {
         // Status from previous cycle was blocked, but there are no more stall
@@ -960,6 +1147,48 @@ IEW::dispatchInsts(ThreadID tid)
             break;
         }
 
+
+        // If it's a pb or it was predicted as a pb, need to
+        // make sure we're ready to finalize it
+        // WARNING: This is duplicated in Decode::checkSignalsAndUpdate(...)
+        // MAKE SURE BOTH HAVE THE SAME LOGIC
+        if (cpu->pbtb.tracker.instNeedsToStall(tid, inst)) {
+            DPRINTF(IEW,"[tid:%i] Stalling for pb [sn:%d] finalize "
+                            " (in dispatchInsts)\n",
+                    tid, inst->seqNum);
+
+            ++iewStats.pbtbBlockedCycles;
+            inst->setPredBTBDidBlock(true); // we also set this in
+            // checkSignalsAndUpdate, since it may have blocked there
+            // but be ready by the time we get here?
+
+            //if (inst->seqNum == 0) {
+            //    DPRINTF(IEW,"[tid:%i] Stalling inst %d, readPredBTBreg:%d, "
+            //                "isControl:%d, isBmov:%d, isSquashed:%d\n",
+            //        inst->seqNum, inst->readPredBTBReg(),
+            //        inst->isControl(), inst->isBmov(), inst->isSquashed());
+            //    panic("Inst with seqnum 0 should never happen?");
+            //}
+
+            // call function to start blocking
+            block(tid);
+            break;
+        }
+
+        // ==================== HANDLE PBTB FINALIZE ===================
+        // Note: all insts do this check, since even non-pbs
+        //       can mispredict as pbs.
+
+        // we know it's ready to finalize
+        // we know it's not squashed
+        bool pbtbMispredicted = resolvePBTBAndCheckMispredict(tid, inst);
+        // This also updates all stats related to finalized insts,
+        // mispredicts, pbs. This also updates the branch target
+        // so that squashing propagates it correctly to fetch
+
+        // WE WILL CHECK THE RESULT OF THE MISPREDICT AND SQUASH AT END
+        // OF DISPATCH LOOP
+
         // Check LSQ if inst is LD/ST
         if ((inst->isAtomic() && ldstQueue.sqFull(tid)) ||
             (inst->isLoad() && ldstQueue.lqFull(tid)) ||
@@ -1102,6 +1331,19 @@ IEW::dispatchInsts(ThreadID tid)
         inst->dispatchTick = curTick() - inst->fetchTick;
 #endif
         ppDispatch->notify(inst);
+
+        // ==== JV PBTB:
+        // NOW: if this instruction mispredicted, everything after it is
+        // wrong, so now that we've dispatched it, we should squash
+        // everything behind us
+        if (pbtbMispredicted) {
+            // squash overwrites fetch-pbtb to correct state (from finalize),
+            // squashes all remaining insts
+            // and updates fetch's branch predicotr
+            squashDueToPBTB(inst, inst->threadNumber);
+            break;
+        }
+
     }
 
     if (!insts_to_dispatch.empty()) {
@@ -1347,15 +1589,15 @@ IEW::executeInsts()
                 // explicitly skip bmovs that are squashedInIQ
 
                 // NOTE: we should only be able to execute one bmov
-                //       per breg per cycle.
-                assert(toDecode->iewInfo->lastExecBmovSeqNum[breg] == 0);
-                //   If we somehow later add the ability to exec multiple
-                //   per cycle, we should make sure lastExecBmovSeqNum
-                //   is the latest executed this cycle, i.e. new bmovs this
-                //   cycle always increase lastExecBmovSeqNum
-                //assert(inst->seqNum > toDecode->iewInfo->lastExecBmovSeqNum);
+                //       per breg per cycle.?
 
-                // Signal to decode of this execution
+                // NEW: With finalize in IEW:
+                // We can just record it as soon as we exec, not
+                // have to send it back in time
+                cpu->pbtb.tracker.recordExecBmovFromIew(
+                        tid, inst->seqNum, breg);
+
+                // Signal to decode-PBTB of this execution (OBSOLETE?)
                 toDecode->iewInfo->lastExecBmovSeqNum[breg] = inst->seqNum;
 
                 //TODO Originally this was to get bmovs working, but now
@@ -1727,9 +1969,287 @@ IEW::checkMisprediction(const DynInstPtr& inst)
     }
 }
 
-bool IEW::resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst) {
-    panic("Not implemented");
-    return true;
+/**
+ * NOTE: actually all insts need to go through this, since they might have been
+ * mispredicted as pbs
+ *
+ * Given a (possibly-pb) inst that's ready to finalize, determine whether it
+ * predicted correctly, then update predictions, stats, logging.
+ * Returns true if it mispredicted and needs to squash
+ */
+bool
+IEW::resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst) {
+    // Stalling needs to happen
+    assert(!cpu->pbtb.tracker.instNeedsToStall(tid, inst));
+
+    // Original code had this after the squash checks,
+    // if we want to make this handle squashed insts that will
+    // take some thinking to make sure it doesn't break anything
+    assert(!inst->isSquashed());
+
+    // PBTB: update bmov stats (we'll get pbtbFinalizedPbs down below)
+    if (inst->isBmov()){ ++iewStats.pbtbFinalizedBmovs; }
+
+    // ==== Count all insts as decoded for the dependency tracker?
+    cpu->pbtb.tracker.recordDecodeInst(tid, inst);
+
+    // ===== PBTB: requery the finalize pbtb
+
+    PBTB::PBTBResultType res;
+    int      d_breg  = -1;
+    uint64_t d_version = 0;
+    bool     d_exhausted;
+    bool     d_taken;
+    Addr     d_targAddr = 0;
+
+    // Note: the address is an in-out param, so make sure to clone
+    //        the pc state if we don't want to clobber it when querying
+    std::unique_ptr<PCStateBase> d_targPC(inst->pcState().clone());
+
+    res = cpu->pbtb.queryFromDispatch(inst->staticInst,
+                                    *d_targPC,
+                                    inst->seqNum,
+                                    &d_breg, &d_version);
+
+    d_targAddr = d_targPC->instAddr();
+    d_exhausted = (res == PBTB::PBTBResultType::PR_Exhaust);
+    d_taken = (res == PBTB::PBTBResultType::PR_Taken);
+
+    // ===== Also pull up the original predictions from fetch to compare
+    int      f_breg      = inst->readPredBTBReg();
+    uint64_t f_version   = inst->readPredBTBVersion();
+    bool     f_exhausted = inst->readPredBTBExhausted();
+    bool     f_taken     = inst->readPredTaken();
+    Addr     f_targAddr  = inst->readPredTarg().instAddr();
+
+    // We now have all relevant data
+
+    // ====== Check if the code itself is malformed (and panic)
+
+    if (d_exhausted) { // Incorrect code: missed a bmov somewhere
+        panic("PBTB: hit exhausted breg in finalize (in dispatch).\n"
+                "This likely means that your binary is invalid, executing "
+                "too many pbs without enough corresponding "
+                "bmov_c insts to supply them");
+        //TODO: this should eventually throw a BMOV exception
+    }
+
+    // finalize-PBTB sees a branch where it shouldn't be, or sees no branch
+    // where there should be one
+    // (This isn't a prediction error, it means the binary is incorrect,
+    //  so we have to just panic out for now)
+    if ((inst->isPb() && d_breg <  0) ||
+        (!inst->isPb() && d_breg >= 0)) {
+        DPRINTF(IEW, "ERROR: [sn:%d] inst->isPb:%c, d_breg=%d\n",
+                inst->seqNum, inst->isPb()?'T':'F', d_breg);
+
+        //NOTE: debugDump only prints with PBTBVerbose, so enable it
+        //      manually here (we're going to panic anyway so it's fine)
+        debug::findFlag(std::string("PBTBVerbose"))->enable();
+        cpu->pbtb.debugDump() ;
+        panic("PBTB doesn't match placeholder"
+                " branch in finalize (in dispatch)\n");
+        //TODO: change this to check the pb inst itself and verify that
+        //      the breg matches d_breg?
+        //TODO: this should eventually throw a BMOV exception
+    }
+
+
+    // ====== Next phase: Determine whether fetch mispredicted and how
+
+
+    bool wrong_outcome = false; // did we go to the right next pc?
+
+    bool mispred = false; // are we going to squash?
+    char mispredReason[256] = "";
+
+    // NOTE:
+    // If we fetched from an exhausted pb, should we allow that to pass
+    // or always squash it? If we're using any kind of exhaust-predictor,
+    // we have to allow exhausted pbs to pass to get any benefit from it.
+    // However, there may also be benefit to allowing exhausted pbs in the
+    // no-predictor pbtb, since treating exhausted pbs as not-taken can
+    // also coincidentally be correct.
+    const bool FORBID_EXHAUST_FETCH =
+        (cpu->pbtb.CONF_PREDICTOR == PBTB_pred_conf_t::PBTB_Pred_None);
+
+
+    // Keep track of nextPC outcome separately from whether we will squash.
+    if (d_targAddr != f_targAddr || d_taken != f_taken) {
+        wrong_outcome = true;
+        snprintf(mispredReason, sizeof(mispredReason),
+                "fetch went to wrong pc: f->0x%lx, d->0x%lx",
+                f_targAddr, d_targAddr);
+    }
+
+
+    // Now: figure it out what the situation of the branch was between
+    //      fetch and now.
+
+    if (d_breg < 0 && f_breg < 0) {
+        // do nothing, no pb in prediction or in actuality
+
+    } else if (d_breg != f_breg || d_version != f_version) {
+        // Case 1: Fetch has reaaaally out of date info, either predicting
+        //     an unrelated branch / wrong version, or missing it entirely
+
+        if (f_breg >= 0 && d_breg < 0) {
+            // Fetch imagined a pb where there should be none
+            iewStats.pbtbFinalizedImaginedPbs++;
+        }
+
+
+        // NOTE: also, if fetch hit an old version or a wrong breg,
+        //   it's likely to soon desync, but might also be coincidentally
+        //   correct. Should we also squash in that case even if the
+        //   prediction was right? (config determines it)
+        if (cpu->pbtb.CONF_FORBID_VERSION_MISMATCH || wrong_outcome) {
+            iewStats.pbtbFinalState_WrongVersionMisp++;
+            mispred = true;
+            snprintf(mispredReason, sizeof(mispredReason),
+                    "breg/vers mismatch: f@b%d-v%ld, d@b%d-v%ld",
+                    f_breg, f_version, d_breg, d_version);
+        } else {
+            iewStats.pbtbFinalState_WrongVersionCorr++;
+        }
+
+    } else if (f_exhausted) {
+        // Case 2: Fetch read from an exhausted breg. It should now
+        //   be down to the predictor
+
+        if (FORBID_EXHAUST_FETCH || wrong_outcome) {
+            iewStats.pbtbFinalState_ExhaustedMisp++;
+            mispred = true;
+        } else {
+            iewStats.pbtbFinalState_ExhaustedCorr++;
+        }
+
+        if (FORBID_EXHAUST_FETCH) {
+            snprintf(mispredReason, sizeof(mispredReason),
+                    "exhausted-fetch FORBIDDEN: f@b%d-EXH", f_breg);
+        } else if (wrong_outcome) {
+            snprintf(mispredReason, sizeof(mispredReason),
+                    "exhausted-fetch mispred: f@b%d-EXH", f_breg);
+        }
+
+
+    } else {
+        // Case 3: there is a branch, all versions match up, it was ready
+        //   at fetch time.
+        assert(d_breg == f_breg);
+        assert(d_version == f_version);
+        assert(!f_exhausted);
+
+        if (wrong_outcome) {
+            // This should only happen if the fetch-pbtb desynced
+            // for some reason, which SHOULD only happen if there's
+            // a bug in the pbtb code, or if we allow version mismatches
+            // to pass without squashing
+            iewStats.pbtbFinalState_ReadyMisp++;
+            mispred = true;
+            snprintf(mispredReason, sizeof(mispredReason),
+                    "ready breg DESYNCED?? f@b%d-v%ld, d@b%d-v%ld",
+                    f_breg, f_version, d_breg, d_version);
+        } else {
+            iewStats.pbtbFinalState_ReadyCorr++;
+        }
+    }
+
+    // ================================================
+    // Condition determined, now print some final debug info
+    // and update stats
+
+    //TODO TEMP DEBUG
+    // DPRINTF(IEW, "JV PBTB: FINALIZING: DEBUG INFO: @pc0x%x\n"
+    //             "------------------d: b%dv%ld: %s%s, ->0x%x\n"
+    //             "------------------f: b%dv%ld: %s%s, ->0x%x\n",
+    //         inst->pcState().instAddr(),
+    //         d_breg, d_version,
+    //         d_exhausted ? "EXH ":"", d_taken?"T":"NT",
+    //         d_targAddr,
+    //         f_breg, f_version,
+    //         f_exhausted ? "EXH ":"", f_taken?"T":"NT",
+    //         f_targAddr);
+
+    // Record any pbs we found and whether or not they mispredicted
+    if (d_breg >= 0) {
+        DPRINTF(IEW, "JV PBTB: Finalized a branch (%s)"
+                        " at pc0x%x->0x%x [sn:%d], b%dv%d\n",
+                d_taken ? "T":"NT",
+                inst->pcState().instAddr(), d_targAddr,
+                inst->seqNum,
+                d_breg, d_version);
+
+        ++iewStats.pbtbFinalizedPbs;
+        if (inst->readPredBTBDidBlock()) {
+            ++iewStats.pbtbFinalizedPbsThatBlocked;
+        }
+
+        if (!mispred) { // We correctly took a pb
+            assert(d_taken == f_taken);
+            assert(!d_taken || (d_targAddr == f_targAddr));
+
+            //TODO: Original code had:
+            //     ++stats.branchResolved;
+        } else {
+            // we mispredcted in one of many complicated ways
+
+            // ORIGINAL CODE HAD THIS, but now there's cases where
+            // we mispredict and there's wasnt a pb, so this
+            // doesn't work?
+
+            //++stats.branchMispred;
+
+            //// Might want to set some sort of boolean and just do
+            //// a check at the end
+            //squash(inst, inst->threadNumber);
+
+            //DPRINTF(IEW,
+            //    "[tid:%i] [sn:%llu] "
+            //    "Updating predictions: Wrong predicted target: "
+            //    "%s PredPC: %s\n",
+            //    tid, inst->seqNum, inst->readPredTarg(), *target);
+            ////The micro pc after an instruction level branch
+            ////should be 0
+            //inst->setPredTarg(*target);
+            //break;
+        }
+    }
+
+
+    if (mispred) {
+        DPRINTF(IEW,
+                "[tid:%i] [sn:%llu] "
+                "JV: PBTB dispatch caught mispredict: %s"
+                ". misp target:0x%x."
+                " corr target:0x%x\n",
+                tid, inst->seqNum, mispredReason,
+                f_targAddr, d_targAddr);
+
+        //++iewStats.controlMispred;  //TODO: TODO TODO
+        ++iewStats.pbtbSquashes; // JV PBTB
+
+        // Store finalized branch outcome as prediction on inst. This
+        // isn't quite the right thing, but we need it in squash() to send
+        // back the corrected branch outcome to fetch's predictor
+        inst->setPredTarg(*d_targPC);
+        inst->setPredTaken(d_taken);
+
+
+        // === JV: WE MISPREDICTED!
+        // squash(inst, inst->threadNumber);
+        // caller needs to squash to::
+        // - overwrite fetch-pbtb to correct state (from finalize),
+        // - squash all incorrectly fetched insts,
+        // - updates fetch's branch predicotr
+        return true;
+
+
+        //break;
+    }
+
+    // All good!
+    return false;
 }
 
 

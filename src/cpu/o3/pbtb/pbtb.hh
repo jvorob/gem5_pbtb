@@ -92,7 +92,7 @@ class BmovTracker
     void reset(); //clear out all state
 
     // ============ tracking functions ( should be set in appropriate places
-    void recordDecodeInst       (ThreadID tid, DynInstConstPtr inst);
+    void recordFinalizedInst    (ThreadID tid, DynInstConstPtr inst);
     void recordExecBmovFromIew  (ThreadID tid, InstSeqNum bmovSeq, int breg);
     void recordCommit           (ThreadID tid, InstSeqNum commitSeq);
 

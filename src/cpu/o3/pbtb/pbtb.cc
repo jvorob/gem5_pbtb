@@ -68,19 +68,24 @@ void BmovTracker::reset() {
 
 // ======== tracking functions ( should be called from Decode)
 
-void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
-    // DPRINTF(Decode, "[tid:%i] [sn:%llu] BmovTracker: recordDecode\n",
+void BmovTracker::recordFinalizedInst(ThreadID tid, DynInstConstPtr inst) {
+    // DPRINTF(IEW, "[tid:%i] [sn:%llu] BmovTracker: recordDecode\n",
     //     tid, inst->seqNum);
 
     // sanity check: decode should be in-order
+    if (inst->seqNum == lastDecAny) { // DEBUGGING:
+        DPRINTF(IEW, "[tid:%i] Warning: inst finalized twice? [sn:%llu]",
+            tid, inst->seqNum);
+    }
     assert(inst->seqNum > lastDecAny);
+
     lastDecAny = inst->seqNum;
 
     if (inst->isBmov()) {
         const int breg = inst->destRegIdx(0);
         const bool nonbit = !inst->isBitBmov();
 
-        DPRINTF(Decode, "[tid:%i] BmovTracker: decoded [sn:%llu]"
+        DPRINTF(IEW, "[tid:%i] BmovTracker: finalized [sn:%llu]"
                 "(%s) breg=%d %s\n",
             tid, inst->seqNum,
             inst->staticInst->disassemble(
@@ -119,7 +124,7 @@ void BmovTracker::recordDecodeInst(ThreadID tid, DynInstConstPtr inst) {
 
 void BmovTracker::recordExecBmovFromIew(ThreadID tid,
         InstSeqNum bmovSeq, int breg ) {
-    DPRINTF(Decode, "[tid:%i] BmovTracker: bmov executed [sn:%d]: b%d"
+    DPRINTF(IEW, "[tid:%i] BmovTracker: bmov executed [sn:%d]: b%d"
         " from iew\n", tid, bmovSeq, breg);
 
     // NOTE: these should always be increasing, since bmovs for the
@@ -141,7 +146,7 @@ void BmovTracker::recordExecBmovFromIew(ThreadID tid,
 
 
     if (theBmov == allFlyingBmovs.end()) {
-        DPRINTF(Decode, "[tid:%i] BmovTracker ERROR: no bmov matching"
+        DPRINTF(IEW, "[tid:%i] BmovTracker ERROR: no bmov matching"
             " seqNum:%d", bmovSeq);
         debugDump();
         panic("BUG IN BMOVTRACKER");
@@ -155,7 +160,7 @@ void BmovTracker::recordExecBmovFromIew(ThreadID tid,
 
 void BmovTracker::recordCommit(ThreadID tid,
          InstSeqNum commitSeqNum ) {
-    //DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordCommit "
+    //DPRINTF(IEW, "[tid:%d] [sn:%llu] BmovTracker: recordCommit "
     //    "NOT IMPLEMENTED\n", tid, instSeqNum);
 
     assert(commitSeqNum >= lastCommittedInst);
@@ -164,13 +169,13 @@ void BmovTracker::recordCommit(ThreadID tid,
     // === Also update the info in our new list of in-flight bmovs
 
     // everything with seqnum <= commitSeqNum is now committed
-    DPRINTF(Decode, "[tid:%d] BmovTracker: recordCommit "
+    DPRINTF(IEW, "[tid:%d] BmovTracker: recordCommit "
         "for [sn:%d]\n", tid, commitSeqNum);
 
     auto it = allFlyingBmovs.begin();
 
     while (it != allFlyingBmovs.end() && it->seqNum <= commitSeqNum) {
-        DPRINTF(Decode, "[tid:%d] - bmov [sn:%d] marked committed\n",
+        DPRINTF(IEW, "[tid:%d] - bmov [sn:%d] marked committed\n",
             tid, it->seqNum);
         it++;
     }
@@ -190,7 +195,7 @@ void BmovTracker::recordCommit(ThreadID tid,
 void BmovTracker::recordSquashFromAhead(ThreadID tid,
          InstSeqNum squashNum) {
     // everything with seq>squashNum is gone
-    DPRINTF(Decode, "[tid:%d] [sn:%llu] BmovTracker: recordingSquash\n",
+    DPRINTF(IEW, "[tid:%d] [sn:%llu] BmovTracker: recordingSquash\n",
         tid, squashNum);
 
 
@@ -203,7 +208,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
         if (entry.seqNum > squashNum) {
         // NOTE: it looks like squashNum is not actually squashed, only
         // everythign > than it. (via looking at load-store queue?)
-            DPRINTF(Decode, "[tid:%i] - squashed [sn:%d], b%d\n",
+            DPRINTF(IEW, "[tid:%i] - squashed [sn:%d], b%d\n",
                     tid, entry.seqNum, entry.breg);
             entry.isSquashed = true;
         }
@@ -247,7 +252,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
 
     //// VERY VERBOSE: TEMP FOR DEBUGGING
     //for (int breg = 0; breg < NUM_PBTB_REGS; breg++) {
-    //DPRINTF(Decode,"[tid:X] BmovTracker: stats: "
+    //DPRINTF(IEW,"[tid:X] BmovTracker: stats: "
     //        "lastDecAny=%d, "
     //        "lastBmov[b%d]=%d, lastNBBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
     //        lastDecAny,
@@ -264,7 +269,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
         // If we don't have any insts, don't worry about it
         if (lastDecBmov[bi] == 0) { continue; }
 
-        DPRINTF(Decode, "[tid:%i] BmovTracker: Squash@%d "
+        DPRINTF(IEW, "[tid:%i] BmovTracker: Squash@%d "
                 " b%d: lastDecode=%d, lastDone=%d.\n",
                 tid, squashNum,
                 bi, lastDecBmov[bi], lastExecBmov[bi]);
@@ -289,7 +294,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
         // InstSeqNum squashSeqNum = fromCommit->commitInfo[tid].doneSeqNum;
         // // everything with seq>squashSeqNum is gone
 
-        // DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
+        // DPRINTF(IEW, "[tid:%i] BMOV Tracking: lastDecode=%d, "
         //         "squash@%d, lastCommited=%d."
         //         " Moving lastDecoded up to squash\n",
         //         tid, lastDecodedInst, squashSeqNum, lastDoneFromCommit);
@@ -299,7 +304,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
         // assert(squashSeqNum >= lastDoneFromCommit); // sanity check?
 
         // if (lastDecodedInst > squashSeqNum) {
-        //     DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastDecode=%d, "
+        //     DPRINTF(IEW, "[tid:%i] BMOV Tracking: lastDecode=%d, "
         //             "squash@%d, lastCommited=%d."
         //             " Moving lastDecoded up to squash\n",
         //             tid, lastDecodedInst,
@@ -310,7 +315,7 @@ void BmovTracker::recordSquashFromAhead(ThreadID tid,
 
         // }
         // if (lastDecodedBmov > squashSeqNum) {
-        //     DPRINTF(Decode, "[tid:%i] BMOV Tracking: lastBmov=%d, "
+        //     DPRINTF(IEW, "[tid:%i] BMOV Tracking: lastBmov=%d, "
         //             "squash@%d, lastCommited=%d."
         //             " Moving lastBmov up to squash\n",
         //             tid, lastDecodedBmov,
@@ -349,7 +354,7 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
     assert(breg >= 0 && breg < PBTB::NUM_REGS);
 
 
-    DPRINTF(Decode,"[tid:X] BmovTracker::instNeedsToStall [sn:%d] breg=%d, "
+    DPRINTF(IEW,"[tid:X] BmovTracker::instNeedsToStall [sn:%d] breg=%d, "
             "lastDecAny=%d, "
             "lastBmov[b%d]=%d, lastNBBmov[b%d]=%d, lastExecBmov[b%d]=%d\n",
             inst->seqNum,
@@ -380,9 +385,9 @@ bool BmovTracker::instNeedsToStall(ThreadID tid,
 
 
 void BmovTracker::debugDump() {
-    DPRINTF(Decode, "===== DUMPING BmovTracker: (Bit/Exec/Sqsh) ====\n");
+    DPRINTF(IEW, "===== DUMPING BmovTracker: (Bit/Exec/Sqsh) ====\n");
     for (const auto& entry : allFlyingBmovs) {
-        DPRINTF(Decode, "- [sn:%d], b%d, (%c%c%c)\n",
+        DPRINTF(IEW, "- [sn:%d], b%d, (%c%c%c)\n",
             entry.seqNum, entry.breg,
             //entry.isBmov?'T':'F',
             entry.isBitBmov?'B':'.',
@@ -653,7 +658,7 @@ void PBTB::setCondition(int breg, InstSeqNum seqnum,
 void PBTB::squashFinalizeToFetch() {
     DPRINTF(PBTB, "PBTB: Overwriting fetch PBTB from finalize\n");
     // TODO: logging to both debug flags for now??
-    DPRINTF(Decode, "PBTB: Overwriting fetch PBTB from finalize\n");
+    DPRINTF(IEW, "PBTB: Overwriting fetch PBTB from finalize\n");
     //TODO: assert that they're equal barring loop counts / bit counts
     map_fetch.setFrom(map_final);
 }

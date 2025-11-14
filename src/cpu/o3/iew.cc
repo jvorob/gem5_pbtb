@@ -1206,19 +1206,6 @@ IEW::dispatchInsts(ThreadID tid)
             break;
         }
 
-        // ==================== HANDLE PBTB FINALIZE ===================
-        // Note: all insts do this check, since even non-pbs
-        //       can mispredict as pbs.
-
-        // we know it's ready to finalize
-        // we know it's not squashed
-        bool pbtbMispredicted = resolvePBTBAndCheckMispredict(tid, inst);
-        // This also updates all stats related to finalized insts,
-        // mispredicts, pbs. This also updates the branch target
-        // so that squashing propagates it correctly to fetch
-
-        // WE WILL CHECK THE RESULT OF THE MISPREDICT AND SQUASH AT END
-        // OF DISPATCH LOOP
 
         // Check LSQ if inst is LD/ST
         if ((inst->isAtomic() && ldstQueue.sqFull(tid)) ||
@@ -1238,6 +1225,25 @@ IEW::dispatchInsts(ThreadID tid)
             ++iewStats.lsqFullEvents;
             break;
         }
+
+
+
+        // ==================== HANDLE PBTB FINALIZE ===================
+        // Note: all insts do this check, since even non-pbs
+        //       can mispredict as pbs.
+        // NOTE: make sure we can't block after this, since this "commits"
+        // the inst somewhat
+
+        // we know it's ready to finalize
+        // we know it's not squashed
+        // we know we won't block
+        bool pbtbMispredicted = resolvePBTBAndCheckMispredict(tid, inst);
+        // This also updates all stats related to finalized insts,
+        // mispredicts, pbs. This also updates the branch target
+        // so that squashing propagates it correctly to fetch
+
+        // WE WILL CHECK THE RESULT OF THE MISPREDICT AND SQUASH AT END
+        // OF DISPATCH LOOP
 
         // hardware transactional memory
         // CPU needs to track transactional state in program order.
@@ -2022,7 +2028,7 @@ IEW::resolvePBTBAndCheckMispredict(int tid, const DynInstPtr &inst) {
     if (inst->isBmov()){ ++iewStats.pbtbFinalizedBmovs; }
 
     // ==== Count all insts as decoded for the dependency tracker?
-    cpu->pbtb.tracker.recordDecodeInst(tid, inst);
+    cpu->pbtb.tracker.recordFinalizedInst(tid, inst);
 
     // ===== PBTB: requery the finalize pbtb
 
